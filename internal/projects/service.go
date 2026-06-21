@@ -1,11 +1,25 @@
 package projects
 
+import (
+	"crypto/rand"
+	"fmt"
+)
+
 type Service struct {
 	repo Repository
 }
 
-func NewService(repo Repository) *Service {
+func NewProjectService(repo Repository) *Service {
 	return &Service{repo: repo}
+}
+
+func generateID() string {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", b)
 }
 
 func (s *Service) GetAllProjects() ([]Project, error) {
@@ -17,6 +31,7 @@ func (s *Service) GetProjectByID(id string) (*Project, error) {
 }
 
 func (s *Service) AddProject(project *Project) error {
+	project.ID = generateID()
 	err := ValidateProject(project)
 	if err != nil {
 		return err

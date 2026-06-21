@@ -1,0 +1,29 @@
+[
+  {
+    "id": "1",
+    "name": "My Project",
+    "description": "",
+    "path": "/mnt/nvme/projects/devflow/",
+    "tech_stack": null,
+    "favorite": false,
+    "commands": null
+  },
+  {
+    "id": "10f626c5dbe2ef7a796981c1816b7f52",
+    "name": "DevFlow",
+    "description": "",
+    "path": "/mnt/nvme/projects/devflow",
+    "tech_stack": null,
+    "favorite": false,
+    "commands": null
+  },
+  {
+    "id": "a82fa7b80696e8354d091064e1df3b8e",
+    "name": "DevFlow",
+    "description": "",
+    "path": "/mnt/nvme/projects/devflow",
+    "tech_stack": null,
+    "favorite": false,
+    "commands": null
+  }
+]

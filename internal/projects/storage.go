@@ -86,9 +86,9 @@ func (s *JSONFileStorage) UpdateProject(updatedProject *Project) error {
 		return err
 	}
 
-	for _, project := range projects {
-		if project.ID == updatedProject.ID {
-			project = *updatedProject
+	for i := range projects {
+		if projects[i].ID == updatedProject.ID {
+			projects[i] = *updatedProject
 			return s.writeProjects(projects)
 		}
 	}
@@ -123,7 +123,7 @@ func (s *JSONFileStorage) MarkProjectFavorite(id string) error {
 
 	for i, project := range projects {
 		if project.ID == id {
-			projects[i].Favorite = true // Mark the project as favorite
+			projects[i].IsFavorite = true // Mark the project as favorite
 			return s.writeProjects(projects)
 		}
 	}
@@ -140,7 +140,7 @@ func (s *JSONFileStorage) UnmarkProjectFavorite(id string) error {
 
 	for i, project := range projects {
 		if project.ID == id {
-			projects[i].Favorite = false // Unmark the project as favorite
+			projects[i].IsFavorite = false // Unmark the project as favorite
 			return s.writeProjects(projects)
 		}
 	}

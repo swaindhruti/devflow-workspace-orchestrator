@@ -1,0 +1,6 @@
+storage:
+  path: "internal/data/projects.json"
+
+runner:
+  shell: "sh"
+  timeout: "0"

@@ -7,7 +7,7 @@ type Project struct {
 	Description string   `json:"description"`
 	Path        string   `json:"path"`
 	TechStack   []string `json:"tech_stack"`
-	Favorite    bool     `json:"favorite"`
+	IsFavorite  bool     `json:"favorite"`
 
 	RunCommands []Command `json:"commands"`
 }

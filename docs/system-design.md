@@ -62,7 +62,7 @@ the vision below stays distinguishable from what is actually built.
 | Command Execution      | Done           | `internal/runner` — tracked, streamed shell processes.           |
 | Docker Awareness       | Done           | `internal/docker` — detection, default commands, container/image inspection, via `internal/shellexec`. |
 | Git Awareness          | Done           | `internal/git` — branch, status, staged/unstaged/untracked counts, ahead/behind, recent commits, via `internal/shellexec`. |
-| tmux Coordination      | Not started    | `internal/tmux` planned next.                                     |
+| tmux Coordination      | Done           | `internal/tmux` — create/list/kill sessions, existence check, via `internal/shellexec`. Interactive attach is a documented app/UI-layer concern (see AttachArgs), not something the capture-based executor can perform. |
 | Interactive Dashboard  | Not started    | Requires the application layer and Bubble Tea UI.                |
 | Search and Filtering   | Not started    | Depends on the dashboard.                                        |
 | Configuration          | Partial        | `internal/config` loads storage/runner settings; theme/shell/editor preferences not yet surfaced. |

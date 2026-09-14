@@ -67,9 +67,9 @@ Detects whether a project has a `Dockerfile` or docker-compose setup, derives a 
 
 Reads current branch, working tree status (staged/unstaged/untracked counts, a clean flag), ahead/behind tracking, and recent commit history, by parsing `git status --porcelain=v2 --branch` and `git log --oneline` directly (no Git library dependency). Implemented in `internal/git`, built on `internal/shellexec`. The dashboard view for this is not built yet — that lands with the Bubble Tea UI.
 
-### tmux Integration — Not started
+### tmux Integration — Done
 
-Create, restore, and attach to sessions so a project can recreate its terminal layout and working environment consistently.
+Creates, lists, and kills tmux sessions per project, and checks whether one already exists, by invoking the `tmux` CLI. Implemented in `internal/tmux`, built on `internal/shellexec`. Interactively attaching to a session hands the real terminal over to the tmux client for the session's lifetime, which the capture-based executor abstraction cannot represent — `tmux.AttachArgs` returns the literal command for the future application/UI layer to exec directly against the terminal, once that layer exists.
 
 ### Interactive Dashboard & Search — Not started
 
@@ -128,6 +128,10 @@ internal/
 		service.go
 		service_test.go
 	git/                    # domain: branch, status, ahead/behind, recent commits
+		model.go
+		service.go
+		service_test.go
+	tmux/                   # domain: session create/list/kill/attach
 		model.go
 		service.go
 		service_test.go

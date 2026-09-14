@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/config"
-	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/projects"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/runner"
 )
 
@@ -24,28 +24,28 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	storage := &projects.JSONFileStorage{
+	storage := &project.JSONFileStorage{
 		FilePath: cfg.Storage.Path,
 	}
 
 	os.MkdirAll(filepath.Dir(cfg.Storage.Path), 0755)
 
-	projectSvc := projects.NewProjectService(storage)
+	projectSvc := project.NewProjectService(storage)
 	runnerSvc := runner.New(runner.Config{
 		Shell:   cfg.Runner.Shell,
 		Timeout: cfg.Runner.Timeout,
 	})
 
-	project := &projects.Project{
+	proj := &project.Project{
 		Name: "DevFlow",
 		Path: "/mnt/nvme/projects/devflow",
 	}
 
-	err = projectSvc.AddProject(project)
+	err = projectSvc.AddProject(proj)
 	if err != nil {
 		log.Fatalf("failed to add project: %v", err)
 	}
-	fmt.Printf("Project added: %s (%s)\n", project.Name, shortID(project.ID))
+	fmt.Printf("Project added: %s (%s)\n", proj.Name, shortID(proj.ID))
 
 	allProjects, err := projectSvc.GetAllProjects()
 	if err != nil {

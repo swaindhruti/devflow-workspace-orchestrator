@@ -1,4 +1,4 @@
-package projects
+package project
 
 // project structure to hold project details
 type Project struct {

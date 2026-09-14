@@ -1,4 +1,4 @@
-package projects
+package project
 
 // AddCommand adds a new command to a project
 func (p *Project) AddCommand(cmd Command) {

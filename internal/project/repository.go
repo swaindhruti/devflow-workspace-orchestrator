@@ -1,4 +1,4 @@
-package projects
+package project
 
 // Methods for managing projects in the repository
 type Repository interface {

@@ -59,9 +59,9 @@ Store project metadata such as name, description, local path, stack, tags, favor
 
 Save and execute project commands like `go test ./...`, `npm run dev`, or `make migrate`, with streamed output captured per process. Implemented in `internal/runner`.
 
-### Docker Awareness — Planned (next)
+### Docker Awareness — Done
 
-Detect whether a project has a `Dockerfile` or docker-compose setup, run default or custom docker/compose commands, and view that project's containers and images without leaving DevFlow. See `internal/docker` in the target layout below.
+Detects whether a project has a `Dockerfile` or docker-compose setup, derives a Docker identifier for scoping CLI queries (Compose's own project-name convention, or a manual override for plain-`Dockerfile` projects), generates default docker/compose commands (`up`, `down`, `build`, `restart`, `logs`, or `build`/`run` without compose), and inspects that project's containers and images. Implemented in `internal/docker`, executed through `internal/runner`, and built on the `internal/shellexec` CLI abstraction. The dashboard view for this is not built yet — that lands with the Bubble Tea UI.
 
 ### Git Integration — Not started
 
@@ -107,6 +107,11 @@ internal/
 	runner/                 # shared infra: tracked shell process execution
 		runner.go
 		runner_test.go
+	shellexec/              # shared infra: CLI executor abstraction (docker/git/tmux)
+		executor.go
+		executor_test.go
+		fake.go
+		fake_test.go
 	project/                # domain: registry, commands, validation, storage
 		commands.go
 		models.go
@@ -114,6 +119,14 @@ internal/
 		service.go
 		storage.go
 		validator.go
+	docker/                 # domain: detection, default commands, container/image inspection
+		detector.go
+		detector_test.go
+		inspector.go
+		inspector_test.go
+		model.go
+		service.go
+		service_test.go
 	data/
 		projects.json       # local runtime project registry (not seed data)
 

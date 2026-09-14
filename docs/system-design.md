@@ -60,8 +60,8 @@ the vision below stays distinguishable from what is actually built.
 | ---------------------- | -------------- | ---------------------------------------------------------------- |
 | Project Registry       | Done           | `internal/project` — model, JSON storage, service, validation.  |
 | Command Execution      | Done           | `internal/runner` — tracked, streamed shell processes.           |
-| Docker Awareness       | Planned        | `internal/docker` — detection, custom commands, container/image view. Next phase. |
-| Git Awareness          | Not started    | `internal/git` planned after Docker.                             |
+| Docker Awareness       | Done           | `internal/docker` — detection, default commands, container/image inspection, via `internal/shellexec`. |
+| Git Awareness          | Not started    | `internal/git` planned next.                                     |
 | tmux Coordination      | Not started    | `internal/tmux` planned after Git.                                |
 | Interactive Dashboard  | Not started    | Requires the application layer and Bubble Tea UI.                |
 | Search and Filtering   | Not started    | Depends on the dashboard.                                        |

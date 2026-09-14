@@ -63,7 +63,8 @@ the vision below stays distinguishable from what is actually built.
 | Docker Awareness       | Done           | `internal/docker` — detection, default commands, container/image inspection, via `internal/shellexec`. |
 | Git Awareness          | Done           | `internal/git` — branch, status, staged/unstaged/untracked counts, ahead/behind, recent commits, via `internal/shellexec`. |
 | tmux Coordination      | Done           | `internal/tmux` — create/list/kill sessions, existence check, via `internal/shellexec`. Interactive attach is a documented app/UI-layer concern (see AttachArgs), not something the capture-based executor can perform. |
-| Interactive Dashboard  | Not started    | Requires the application layer and Bubble Tea UI.                |
+| Application Layer      | Done           | `internal/app` — composition root wiring all four domains; cross-domain project registration (with Docker auto-detection), project context aggregation (Git + Docker in one read), and command routing. `cmd/devflow` now runs through it end to end. |
+| Interactive Dashboard  | Not started    | Requires the Bubble Tea UI (`internal/ui`); the application layer it depends on is now in place. |
 | Search and Filtering   | Not started    | Depends on the dashboard.                                        |
 | Configuration          | Partial        | `internal/config` loads storage/runner settings; theme/shell/editor preferences not yet surfaced. |
 

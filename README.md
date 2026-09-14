@@ -71,9 +71,13 @@ Reads current branch, working tree status (staged/unstaged/untracked counts, a c
 
 Creates, lists, and kills tmux sessions per project, and checks whether one already exists, by invoking the `tmux` CLI. Implemented in `internal/tmux`, built on `internal/shellexec`. Interactively attaching to a session hands the real terminal over to the tmux client for the session's lifetime, which the capture-based executor abstraction cannot represent — `tmux.AttachArgs` returns the literal command for the future application/UI layer to exec directly against the terminal, once that layer exists.
 
+### Application Layer — Done
+
+The composition root wiring project, docker, git, and tmux together, plus the cross-domain operations no single domain package should perform itself: registering a project and auto-detecting its Docker setup in one call, aggregating a project's live Git status and Docker containers/images into one read, and routing a saved command to the right executor regardless of which domain it belongs to. Implemented in `internal/app`; `cmd/devflow` now runs through it end to end instead of wiring services by hand.
+
 ### Interactive Dashboard & Search — Not started
 
-A terminal UI to browse, search, and filter projects (by name, technology, tags, favorites, recently opened) and surface Git/Docker context at a glance. Depends on the application and UI layers.
+A terminal UI to browse, search, and filter projects (by name, technology, tags, favorites, recently opened) and surface Git/Docker context at a glance, built on the application layer above. Depends on the Bubble Tea UI layer.
 
 ### Configuration and Persistence — Partial
 
@@ -135,6 +139,11 @@ internal/
 		model.go
 		service.go
 		service_test.go
+	app/                    # composition root: wires domains, cross-domain orchestration
+		app.go
+		command.go
+		context.go
+		project.go
 	data/
 		projects.json       # local runtime project registry (not seed data)
 

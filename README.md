@@ -63,9 +63,9 @@ Save and execute project commands like `go test ./...`, `npm run dev`, or `make 
 
 Detects whether a project has a `Dockerfile` or docker-compose setup, derives a Docker identifier for scoping CLI queries (Compose's own project-name convention, or a manual override for plain-`Dockerfile` projects), generates default docker/compose commands (`up`, `down`, `build`, `restart`, `logs`, or `build`/`run` without compose), and inspects that project's containers and images. Implemented in `internal/docker`, executed through `internal/runner`, and built on the `internal/shellexec` CLI abstraction. The dashboard view for this is not built yet — that lands with the Bubble Tea UI.
 
-### Git Integration — Not started
+### Git Integration — Done
 
-Track repository context such as branch, status, recent commits, and ahead/behind information.
+Reads current branch, working tree status (staged/unstaged/untracked counts, a clean flag), ahead/behind tracking, and recent commit history, by parsing `git status --porcelain=v2 --branch` and `git log --oneline` directly (no Git library dependency). Implemented in `internal/git`, built on `internal/shellexec`. The dashboard view for this is not built yet — that lands with the Bubble Tea UI.
 
 ### tmux Integration — Not started
 
@@ -124,6 +124,10 @@ internal/
 		detector_test.go
 		inspector.go
 		inspector_test.go
+		model.go
+		service.go
+		service_test.go
+	git/                    # domain: branch, status, ahead/behind, recent commits
 		model.go
 		service.go
 		service_test.go

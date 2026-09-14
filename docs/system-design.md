@@ -51,6 +51,22 @@ These actions are individually simple but collectively expensive. DevFlow reduce
 
 ## Core Functional Areas
 
+### Implementation Status
+
+This section is kept up to date at the end of each development phase so
+the vision below stays distinguishable from what is actually built.
+
+| Area                  | Status         | Notes                                                           |
+| ---------------------- | -------------- | ---------------------------------------------------------------- |
+| Project Registry       | Done           | `internal/project` — model, JSON storage, service, validation.  |
+| Command Execution      | Done           | `internal/runner` — tracked, streamed shell processes.           |
+| Docker Awareness       | Planned        | `internal/docker` — detection, custom commands, container/image view. Next phase. |
+| Git Awareness          | Not started    | `internal/git` planned after Docker.                             |
+| tmux Coordination      | Not started    | `internal/tmux` planned after Git.                                |
+| Interactive Dashboard  | Not started    | Requires the application layer and Bubble Tea UI.                |
+| Search and Filtering   | Not started    | Depends on the dashboard.                                        |
+| Configuration          | Partial        | `internal/config` loads storage/runner settings; theme/shell/editor preferences not yet surfaced. |
+
 ### Project Registry
 
 The registry is the source of truth for all managed projects. Each record can store:
@@ -86,6 +102,25 @@ Each project can define reusable commands such as:
 - `make migrate`
 
 Commands should run in a way that preserves streamed output and gives clear feedback inside the terminal UI.
+
+### Docker Awareness
+
+Projects that use Docker should be recognized automatically and get a
+dedicated way to run and inspect their containers without leaving DevFlow.
+
+- Detect whether a project has a `Dockerfile` and/or a docker-compose file
+  (`docker-compose.yml`/`.yaml`, `compose.yml`/`.yaml`).
+- Derive a project identifier for scoping Docker CLI calls: the
+  docker-compose project name convention when a compose file is present,
+  with a manual identifier field on the project as an override or as the
+  fallback for plain-`Dockerfile` projects.
+- Provide default, editable Docker commands once Docker is detected (e.g.
+  `up`, `down`, `build`, `restart`, `logs`), run the same way project
+  commands are — through the shared command runner.
+- A container/image view scoped to the project: list its running and
+  stopped containers and its images, filtered by the project's Docker
+  identifier so unrelated containers on the machine don't clutter the
+  view.
 
 ### Git Awareness
 

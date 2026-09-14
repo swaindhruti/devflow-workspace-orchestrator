@@ -49,43 +49,51 @@ With DevFlow, you can:
 
 ## Current Scope
 
-### Project Registry
+Status is tracked in detail in [docs/system-design.md](docs/system-design.md#implementation-status); the summary below reflects that table.
 
-Store project metadata such as name, description, local path, stack, tags, favorite status, Git support, saved commands, and timestamps.
+### Project Registry — Done
 
-### Interactive Dashboard
+Store project metadata such as name, description, local path, stack, tags, favorite status, Git support, saved commands, and timestamps. Implemented in `internal/project`.
 
-Use a terminal UI to browse projects and surface repository context such as branch, working tree status, favorites, and recent activity.
+### Command Runner — Done
 
-### Command Runner
+Save and execute project commands like `go test ./...`, `npm run dev`, or `make migrate`, with streamed output captured per process. Implemented in `internal/runner`.
 
-Save and execute project commands like `go test ./...`, `npm run dev`, or `make migrate`, with streamed output in the terminal interface.
+### Docker Awareness — Planned (next)
 
-### Git Integration
+Detect whether a project has a `Dockerfile` or docker-compose setup, run default or custom docker/compose commands, and view that project's containers and images without leaving DevFlow. See `internal/docker` in the target layout below.
+
+### Git Integration — Not started
 
 Track repository context such as branch, status, recent commits, and ahead/behind information.
 
-### tmux Integration
+### tmux Integration — Not started
 
 Create, restore, and attach to sessions so a project can recreate its terminal layout and working environment consistently.
 
-### Search and Filters
+### Interactive Dashboard & Search — Not started
 
-Find projects by name, technology, or tags, and narrow results with favorites, recently opened projects, and stack-based filters.
+A terminal UI to browse, search, and filter projects (by name, technology, tags, favorites, recently opened) and surface Git/Docker context at a glance. Depends on the application and UI layers.
 
-### Configuration and Persistence
+### Configuration and Persistence — Partial
 
-Start with JSON storage and a compact config file for user preferences.
+JSON storage and a compact YAML config file are in place (`internal/config`); theme/shell/editor preferences are not yet surfaced.
 
 ## Technology Stack
 
 - Go for concurrency, portability, and a small runtime footprint
 - Bubble Tea for event-driven terminal UI state management
 - Lip Gloss for styling, borders, layout, and responsive components
-- Viper for configuration loading and environment support
+- YAML (`gopkg.in/yaml.v3`) for configuration loading
 - JSON for persistence
 
 ## Code Tree
+
+DevFlow is organized domain-first: each capability (`project`, and soon
+`docker`, `git`, `tmux`) owns its model, logic, and tests in one package,
+rather than being split across generic `models/`/`services/`/`storage/`
+layers. See [docs/architecture.md](docs/architecture.md) for the full
+rationale.
 
 ```text
 cmd/
@@ -93,18 +101,21 @@ cmd/
 		main.go
 
 internal/
-	config/
+	config/                 # shared infra: YAML config loading
 		config.go
 		config_test.go
-	projects/
+	runner/                 # shared infra: tracked shell process execution
+		runner.go
+		runner_test.go
+	project/                # domain: registry, commands, validation, storage
 		commands.go
 		models.go
 		repository.go
 		service.go
 		storage.go
 		validator.go
-	runner/
-		runner.go
+	data/
+		projects.json       # local runtime project registry (not seed data)
 
 devflow.png
 devflow.yaml

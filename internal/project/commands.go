@@ -1,11 +1,22 @@
 package project
 
-// AddCommand adds a new command to a project
+// AddCommand appends a new command to the project's saved command list.
+//
+// Parameters:
+//   - cmd: the command to add. Callers are responsible for setting its ID
+//     and ProjectID before calling AddCommand; this method does not
+//     generate or validate them.
 func (p *Project) AddCommand(cmd Command) {
 	p.RunCommands = append(p.RunCommands, cmd)
 }
 
-// UpdateCommand updates an existing command in a project
+// UpdateCommand replaces the saved command whose ID matches updatedCmd.ID
+// with the given values. If no command with that ID exists, UpdateCommand
+// is a no-op.
+//
+// Parameters:
+//   - updatedCmd: the new state for the command, matched by its existing
+//     ID.
 func (p *Project) UpdateCommand(updatedCmd Command) {
 	for i, cmd := range p.RunCommands {
 		if cmd.ID == updatedCmd.ID {
@@ -15,7 +26,12 @@ func (p *Project) UpdateCommand(updatedCmd Command) {
 	}
 }
 
-// DeleteCommand deletes a command from a project by its ID
+// DeleteCommand removes the saved command matching cmdID from the
+// project's command list. If no command with that ID exists, DeleteCommand
+// is a no-op.
+//
+// Parameters:
+//   - cmdID: the Command.ID to remove.
 func (p *Project) DeleteCommand(cmdID string) {
 	for i, cmd := range p.RunCommands {
 		if cmd.ID == cmdID {
@@ -25,7 +41,7 @@ func (p *Project) DeleteCommand(cmdID string) {
 	}
 }
 
-// GetAllCommands returns all commands associated with a project
+// GetAllCommands returns every command saved for the project.
 func (p *Project) GetAllCommands() []Command {
 	return p.RunCommands
 }

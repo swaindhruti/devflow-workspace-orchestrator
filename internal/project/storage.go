@@ -6,11 +6,29 @@ import (
 	"os"
 )
 
+// JSONFileStorage is a Repository implementation that persists all
+// projects as a single JSON array in a flat file on disk. It is DevFlow's
+// initial (Phase 1) storage backend, chosen for being simple, human
+// readable, and easy to inspect or hand-edit; see docs/system-design.md for
+// the persistence roadmap.
+//
+// Every method performs a full read-modify-write of the file: it reads the
+// entire project list, mutates it in memory, and writes the whole list back
+// out. This keeps the implementation simple and is adequate at the scale of
+// a personal project registry, but is not designed for concurrent writers
+// or large project counts.
 type JSONFileStorage struct {
+	// FilePath is the location of the JSON file that stores all projects.
 	FilePath string
 }
 
-// readProjects reads the projects from the JSON file and returns them as a slice of Projects
+// readProjects loads and decodes the full project list from FilePath.
+//
+// Returns an empty (non-nil) slice, with no error, if the file does not yet
+// exist or is empty — both are treated as "no projects registered yet"
+// rather than a failure, so callers can use JSONFileStorage before any
+// project has ever been written. Returns an error if the file exists but
+// could not be read or contains invalid JSON.
 func (s *JSONFileStorage) readProjects() ([]Project, error) {
 	data, err := os.ReadFile(s.FilePath)
 	if err != nil {
@@ -34,7 +52,15 @@ func (s *JSONFileStorage) readProjects() ([]Project, error) {
 	return projects, nil
 }
 
-// writeProjects writes the given projects to the JSON file
+// writeProjects encodes projects as indented JSON and overwrites FilePath
+// with the result.
+//
+// Parameters:
+//   - projects: the complete project list to persist. This replaces the
+//     file's entire prior contents.
+//
+// Returns an error if the data could not be marshaled or the file could
+// not be written.
 func (s *JSONFileStorage) writeProjects(projects []Project) error {
 	data, err := json.MarshalIndent(projects, "", "  ")
 	if err != nil {
@@ -46,12 +72,20 @@ func (s *JSONFileStorage) writeProjects(projects []Project) error {
 	return err
 }
 
-// GetAllProjects retrieves all projects from the JSON file
+// GetAllProjects implements Repository by returning every project stored
+// in the JSON file.
 func (s *JSONFileStorage) GetAllProjects() ([]Project, error) {
 	return s.readProjects()
 }
 
-// GetProjectByID retrieves a project by its ID from the JSON file
+// GetProjectByID implements Repository by scanning the JSON file's project
+// list for an entry whose ID matches id.
+//
+// Parameters:
+//   - id: the Project.ID to look up.
+//
+// Returns the matching project, or an error if the file could not be read
+// or no project with that ID is present.
 func (s *JSONFileStorage) GetProjectByID(id string) (*Project, error) {
 	projects, err := s.readProjects()
 	if err != nil {
@@ -67,7 +101,14 @@ func (s *JSONFileStorage) GetProjectByID(id string) (*Project, error) {
 	return nil, errors.New("project not found")
 }
 
-// AddProject adds a new project to the JSON file
+// AddProject implements Repository by appending project to the stored list
+// and rewriting the JSON file.
+//
+// Parameters:
+//   - project: the project to add. Its ID is expected to already be set
+//     and unique; JSONFileStorage does not check for duplicate IDs.
+//
+// Returns an error if the file could not be read or rewritten.
 func (s *JSONFileStorage) AddProject(project *Project) error {
 	projects, err := s.readProjects()
 	if err != nil {
@@ -79,7 +120,14 @@ func (s *JSONFileStorage) AddProject(project *Project) error {
 	return s.writeProjects(projects)
 }
 
-// UpdateProject updates an existing project in the JSON file
+// UpdateProject implements Repository by replacing the stored project
+// whose ID matches updatedProject.ID with the given values.
+//
+// Parameters:
+//   - updatedProject: the new state for the project, matched by ID.
+//
+// Returns an error if the file could not be read or rewritten, or if no
+// stored project has a matching ID.
 func (s *JSONFileStorage) UpdateProject(updatedProject *Project) error {
 	projects, err := s.readProjects()
 	if err != nil {
@@ -97,7 +145,14 @@ func (s *JSONFileStorage) UpdateProject(updatedProject *Project) error {
 
 }
 
-// DeleteProject deletes a project by its ID from the JSON file
+// DeleteProject implements Repository by removing the stored project whose
+// ID matches id and rewriting the JSON file without it.
+//
+// Parameters:
+//   - id: the Project.ID to remove.
+//
+// Returns an error if the file could not be read or rewritten, or if no
+// stored project has a matching ID.
 func (s *JSONFileStorage) DeleteProject(id string) error {
 	projects, err := s.readProjects()
 	if err != nil {
@@ -114,7 +169,14 @@ func (s *JSONFileStorage) DeleteProject(id string) error {
 	return errors.New("project not found")
 }
 
-// MArkProjectFavorite marks a project as favorite by its ID in the JSON file
+// MarkProjectFavorite implements Repository by setting IsFavorite to true
+// on the stored project whose ID matches id and rewriting the JSON file.
+//
+// Parameters:
+//   - id: the Project.ID to mark as a favorite.
+//
+// Returns an error if the file could not be read or rewritten, or if no
+// stored project has a matching ID.
 func (s *JSONFileStorage) MarkProjectFavorite(id string) error {
 	projects, err := s.readProjects()
 	if err != nil {
@@ -131,7 +193,15 @@ func (s *JSONFileStorage) MarkProjectFavorite(id string) error {
 	return errors.New("project not found")
 }
 
-// UnmarkProjectFavorite unmarks a project as favorite by its ID in the JSON file
+// UnmarkProjectFavorite implements Repository by setting IsFavorite to
+// false on the stored project whose ID matches id and rewriting the JSON
+// file.
+//
+// Parameters:
+//   - id: the Project.ID to unmark as a favorite.
+//
+// Returns an error if the file could not be read or rewritten, or if no
+// stored project has a matching ID.
 func (s *JSONFileStorage) UnmarkProjectFavorite(id string) error {
 	projects, err := s.readProjects()
 	if err != nil {

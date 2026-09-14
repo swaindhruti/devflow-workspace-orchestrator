@@ -1,23 +1,62 @@
+// Package project implements DevFlow's project registry domain: the data
+// model for a registered project and its saved commands, a Repository
+// abstraction over how projects are persisted, a JSON-file-backed
+// implementation of that abstraction, a Service that layers validation and
+// ID generation on top of a Repository, and validation rules for project
+// data. Every file in this package concerns the same domain concept (a
+// "project"), following a domain-first layout rather than splitting model,
+// storage, and service logic into separate top-level packages.
 package project
 
-// project structure to hold project details
+// Project represents a single workspace registered with DevFlow: a local
+// directory the user works in, along with the metadata and saved commands
+// DevFlow needs to present and operate on it.
 type Project struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Path        string   `json:"path"`
-	TechStack   []string `json:"tech_stack"`
-	IsFavorite  bool     `json:"favorite"`
+	// ID uniquely identifies the project. It is assigned by Service.AddProject
+	// (via generateID) and must never be set by callers before that point.
+	ID string `json:"id"`
+	// Name is the human-readable project name shown in the dashboard.
+	Name string `json:"name"`
+	// Description is an optional free-text summary of the project.
+	Description string `json:"description"`
+	// Path is the absolute filesystem path to the project's local
+	// directory. It is required: Service.AddProject and Service.UpdateProject
+	// both reject a Project with an empty Path via ValidateProject.
+	Path string `json:"path"`
+	// TechStack lists the technologies or languages associated with the
+	// project (e.g. "go", "react"), used for search and filtering.
+	TechStack []string `json:"tech_stack"`
+	// IsFavorite marks the project as a favorite for quick access in the
+	// dashboard. It is toggled independently of UpdateProject via
+	// Service.MarkProjectFavorite and Service.UnmarkProjectFavorite.
+	IsFavorite bool `json:"favorite"`
 
+	// RunCommands holds the reusable shell commands saved for this
+	// project (e.g. "go test ./...", "npm run dev"). Manage this slice
+	// through the AddCommand, UpdateCommand, DeleteCommand, and
+	// GetAllCommands helpers in commands.go rather than mutating it
+	// directly, so callers have one consistent place to look for that
+	// logic.
 	RunCommands []Command `json:"commands"`
 }
 
-// command structure to hold command details
+// Command represents a single saved, reusable shell command scoped to a
+// project, such as a build, test, or run step.
 type Command struct {
-	ID          string `json:"id"`
-	ProjectID   string `json:"project_id"`
-	Name        string `json:"name"`
-	Command     string `json:"command"`
-	Path        string `json:"path"`
+	// ID uniquely identifies the command within its project.
+	ID string `json:"id"`
+	// ProjectID is the ID of the Project this command belongs to.
+	ProjectID string `json:"project_id"`
+	// Name is a short, human-readable label for the command (e.g. "Run
+	// tests"), shown in the UI instead of the raw command string.
+	Name string `json:"name"`
+	// Command is the actual shell command text to execute (e.g.
+	// "go test ./...").
+	Command string `json:"command"`
+	// Path is an optional working directory the command should run from,
+	// relative to or overriding the project's own Path.
+	Path string `json:"path"`
+	// Description is an optional free-text note about what the command
+	// does.
 	Description string `json:"description"`
 }

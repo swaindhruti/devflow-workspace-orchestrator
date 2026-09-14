@@ -38,6 +38,32 @@ type Project struct {
 	// directly, so callers have one consistent place to look for that
 	// logic.
 	RunCommands []Command `json:"commands"`
+
+	// HasDocker records whether the project directory contains a
+	// Dockerfile and/or a docker-compose file. It is set by the
+	// internal/docker package's detector, not by this package, since
+	// detection requires filesystem access this package deliberately
+	// does not perform.
+	HasDocker bool `json:"has_docker"`
+	// DockerComposeFile is the filename of the compose file detected in
+	// the project directory (e.g. "docker-compose.yml"), or "" if the
+	// project has no compose file (a plain Dockerfile only, or no Docker
+	// setup at all).
+	DockerComposeFile string `json:"docker_compose_file,omitempty"`
+	// DockerIdentifier scopes Docker CLI queries (docker ps, docker
+	// images) to this project. When DockerComposeFile is set, it
+	// defaults to Docker Compose's own project-name convention (the
+	// lowercased project directory name) so containers/images already
+	// carry the matching com.docker.compose.project label with no extra
+	// setup. It can be overridden here, and is the only way to scope a
+	// plain-Dockerfile project (with no compose file) that has no such
+	// label to filter by.
+	DockerIdentifier string `json:"docker_identifier,omitempty"`
+	// DockerCommands holds the reusable docker/compose commands saved
+	// for this project (e.g. "up", "down", "build"), managed the same
+	// way as RunCommands. Populated with defaults once Docker is
+	// detected, and editable like any other saved command afterward.
+	DockerCommands []Command `json:"docker_commands,omitempty"`
 }
 
 // Command represents a single saved, reusable shell command scoped to a

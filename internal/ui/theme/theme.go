@@ -7,10 +7,15 @@
 // user's terminal uses.
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
 
-// Primary is DevFlow's accent color, used for the banner, active
-// selections, and anything that should draw the eye first.
+	"github.com/charmbracelet/lipgloss"
+	colorful "github.com/lucasb-eyer/go-colorful"
+)
+
+// Primary is DevFlow's accent color, used for active selections, titles,
+// and anything that should draw the eye first.
 var Primary = lipgloss.AdaptiveColor{Light: "#0057B8", Dark: "#4FC3F7"}
 
 // Muted is used for secondary text: descriptions, hints, and anything
@@ -38,3 +43,42 @@ var SubtleStyle = lipgloss.NewStyle().Foreground(Muted)
 // HelpStyle renders keybinding hints, typically pinned to the bottom of a
 // screen.
 var HelpStyle = lipgloss.NewStyle().Foreground(Muted).Italic(true)
+
+// Gradient renders each line of lines in a color smoothly interpolated
+// between from and to — the first line closest to from, the last line
+// closest to to — for decorative multi-line text such as a banner.
+//
+// Parameters:
+//   - lines: the text to render, one entry per line, already laid out
+//     (e.g. banner.Render's output split on "\n").
+//   - from: the color the first line is rendered closest to. Must be a
+//     hex color (e.g. "#7C3AED"); AdaptiveColor's single-value ANSI/hex
+//     forms don't apply here, since blending needs concrete RGB to
+//     interpolate through — a gradient is a decorative flourish, not
+//     body text, so a fixed truecolor pair (rather than full light/dark
+//     adaptive blending) is an acceptable simplification.
+//   - to: the color the last line is rendered closest to, same
+//     constraints as from.
+//
+// Returns the styled lines joined by "\n". If from or to is not a valid
+// hex color, Gradient falls back to returning lines unstyled rather than
+// rendering everything in a meaningless color.
+func Gradient(lines []string, from, to lipgloss.Color) string {
+	start, errFrom := colorful.Hex(string(from))
+	end, errTo := colorful.Hex(string(to))
+	if errFrom != nil || errTo != nil {
+		return strings.Join(lines, "\n")
+	}
+
+	styled := make([]string, len(lines))
+	for i, line := range lines {
+		t := 0.0
+		if len(lines) > 1 {
+			t = float64(i) / float64(len(lines)-1)
+		}
+		blended := start.BlendLuv(end, t)
+		styled[i] = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(blended.Hex())).Render(line)
+	}
+
+	return strings.Join(styled, "\n")
+}

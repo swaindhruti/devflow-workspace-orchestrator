@@ -3,7 +3,6 @@ package splash
 import (
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -25,19 +24,11 @@ func (f *fakeScreen) Init() tea.Cmd {
 func (f *fakeScreen) Update(tea.Msg) (screen.Screen, tea.Cmd) { return f, nil }
 func (f *fakeScreen) View() string                            { return "fake" }
 
-func TestInitReturnsTickCommand(t *testing.T) {
-	// A tiny duration so this test doesn't block on the real production
-	// delay (displayDuration) to observe the tick fire.
-	m := Model{next: &fakeScreen{}, duration: time.Millisecond}
+func TestInitReturnsNilCommand(t *testing.T) {
+	m := New(&fakeScreen{})
 
-	cmd := m.Init()
-	if cmd == nil {
-		t.Fatal("expected a non-nil command")
-	}
-
-	msg := cmd()
-	if _, ok := msg.(tickMsg); !ok {
-		t.Fatalf("expected tickMsg, got %T", msg)
+	if cmd := m.Init(); cmd != nil {
+		t.Errorf("expected nil Cmd (splash has no timer or load to kick off), got %v", cmd)
 	}
 }
 
@@ -57,20 +48,6 @@ func TestUpdateTransitionsOnKeyPress(t *testing.T) {
 		// New's fakeScreen.Init returns nil, so the propagated Cmd should
 		// also be nil.
 		t.Errorf("expected nil Cmd from fakeScreen.Init, got %v", cmd)
-	}
-}
-
-func TestUpdateTransitionsOnTick(t *testing.T) {
-	next := &fakeScreen{}
-	m := New(next)
-
-	got, _ := m.Update(tickMsg{})
-
-	if got != screen.Screen(next) {
-		t.Fatal("expected Update to return the next screen on tickMsg")
-	}
-	if !next.initCalled {
-		t.Error("expected the next screen's Init to have been called")
 	}
 }
 

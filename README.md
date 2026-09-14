@@ -75,9 +75,9 @@ Creates, lists, and kills tmux sessions per project, and checks whether one alre
 
 The composition root wiring project, docker, git, and tmux together, plus the cross-domain operations no single domain package should perform itself: registering a project and auto-detecting its Docker setup in one call, aggregating a project's live Git status and Docker containers/images into one read, and routing a saved command to the right executor regardless of which domain it belongs to. Implemented in `internal/app`; `cmd/devflow` now runs through it end to end instead of wiring services by hand.
 
-### Interactive Dashboard & Search — Not started
+### Interactive Dashboard & Search — Partial
 
-A terminal UI to browse, search, and filter projects (by name, technology, tags, favorites, recently opened) and surface Git/Docker context at a glance, built on the application layer above. Depends on the Bubble Tea UI layer.
+`cmd/devflow` is now the real Bubble Tea entrypoint: a splash screen shows a block-letter "DEVFLOW" banner (`internal/ui/banner`) and tagline, then hands off to a keyboard-navigable project list (`internal/ui/dashboard`) showing each project's favorite marker, tech stack, path, and a Docker badge. Implemented as independent, swappable screen packages under `internal/ui` (see `internal/ui/screen`'s `Screen` interface) sharing a common `internal/ui/theme` style palette. Still pending: search/filtering, a project detail view (Git status, commands, Docker containers/images — `app.ProjectContext` already exists for this), command output streaming, and a tmux session view.
 
 ### Configuration and Persistence — Partial
 
@@ -144,6 +144,14 @@ internal/
 		command.go
 		context.go
 		project.go
+	ui/                     # Bubble Tea terminal interface (the real entrypoint)
+		root.go
+		ui.go
+		screen/              # Screen interface every view implements
+		theme/               # shared color tokens and base styles
+		banner/              # block-letter text renderer (the splash banner)
+		splash/              # startup screen
+		dashboard/           # project list screen
 	data/
 		projects.json       # local runtime project registry (not seed data)
 

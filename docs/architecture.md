@@ -113,7 +113,15 @@ These are used by domain packages but hold no domain rules of their own.
   coordinate across domains.
 - **`internal/ui`** — the Bubble Tea + Lip Gloss terminal interface:
   rendering, keyboard input, and view state, with no business logic of
-  its own.
+  its own. Modular by construction: each top-level view (`splash`,
+  `dashboard`, and whatever follows) is its own subpackage implementing a
+  shared `Screen` interface (`internal/ui/screen`), so views are
+  independently testable and swappable rather than one large model. The
+  root `internal/ui` package owns only the `rootModel` that delegates to
+  whichever `Screen` is currently active. `internal/ui/theme` holds the
+  shared color tokens and base styles every screen renders from, and
+  `internal/ui/banner` is a small standalone block-letter text renderer
+  (used by `splash` for the startup banner).
 
 ## Recommended Repository Layout
 
@@ -134,6 +142,11 @@ internal/
 
     app/
     ui/
+        screen/
+        theme/
+        banner/
+        splash/
+        dashboard/
 
 assets/
 scripts/

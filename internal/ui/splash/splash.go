@@ -27,80 +27,133 @@ var (
 	gradientTo   = lipgloss.Color("#FACC15")
 )
 
-// Domain mascot colors — one accent per DevFlow domain (git, docker,
-// tmux, and the project registry itself). All four mascots share the
-// exact same pixel shape (see mascotBitmapFrames); color is what tells
-// them apart, the same way the reference "little robot" design this was
-// modeled on reads as a single character purely through its fill color.
-var (
-	gitColor      = lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FB923C"}
-	dockerColor   = lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}
-	tmuxColor     = lipgloss.AdaptiveColor{Light: "#15803D", Dark: "#4ADE80"}
-	projectsColor = lipgloss.AdaptiveColor{Light: "#A21CAF", Dark: "#E879F9"}
+// mascotBitmapWidth is the number of grid cells across every mascot
+// bitmap row (see mascotSpec.Frames). mascotWidth/mascotHeight are the
+// rendered size of the art itself in terminal cells (mascotBitmapWidth
+// doubled, since each grid cell expands to two terminal columns — see
+// renderMascotArt). cornerHeight adds room for the blank line and name
+// caption every corner also renders (see renderCorner); View uses
+// mascotWidth/cornerHeight to lay the four corners out without measuring
+// each one individually.
+const (
+	mascotBitmapWidth = 13
+	mascotWidth       = mascotBitmapWidth * 2
+	mascotHeight      = 8
+	cornerHeight      = mascotHeight + 2 // + blank line + name row
 )
 
-// mascotBitmapFrames are the two block-art animation frames every corner
-// mascot cycles between, using the same dot-matrix technique
-// banner.Render uses for the DEVFLOW wordmark: each cell of the grid
-// expands to a filled ("█") or empty (" ") pair of terminal columns (two
-// columns per cell keeps the shape roughly square, since terminal cells
-// are taller than they are wide). The shape — a wide blocky head with a
-// small tab at each top corner, two square eyes, and two short feet — is
-// modeled on a simple blocky robot mascot reference.
+// headRow and gapRow are the bitmap rows shared by every mascot's head
+// outline and the blank spacer above its foot — only the topper, eyes,
+// and foot rows vary per mascot and per animation frame (see
+// mascotSpec.Frames/buildFrame), so each mascot's own "signature" stays
+// legible against a consistent head shape.
+const (
+	headRow = ".###########."
+	gapRow  = "............."
+)
+
+// buildFrame assembles one full 8-row mascot animation frame from its
+// three mascot-specific rows, filling in the shared headRow/gapRow rows
+// around them.
 //
-// Frame 0 is the idle pose: eyes open (the two empty squares), feet
-// planted evenly. Frame 1 is the blink-and-wave pose: eyes shut (filled
-// solid, a common pixel-art blink convention) and one foot stepped over,
-// reading as a small wave/bob. Cycling between the two on a timer (see
-// frameMsg/tickFrame) is what gives the corner mascots their motion.
-var mascotBitmapFrames = [2][]string{
-	{
-		"##.......##",
-		"###########",
-		"###########",
-		"##..###..##",
-		"##..###..##",
-		"###########",
-		"...........",
-		"..##...##..",
+// Parameters:
+//   - topper: the row above the head — an antenna, a flat roof, a
+//     folder tab, etc. — the clearest single-glance signal of which
+//     mascot this is.
+//   - eyes: the row used twice for the eye band. A solid headRow-style
+//     string here reads as "eyes shut" (this project's blink
+//     convention), anything else as the mascot's particular eye shape.
+//   - foot: the row below the gap, showing the mascot's stance.
+//
+// All three, like every row in this file, must be exactly
+// mascotBitmapWidth runes so every mascot renders at the same fixed
+// mascotWidth.
+func buildFrame(topper, eyes, foot string) []string {
+	return []string{topper, headRow, headRow, eyes, eyes, headRow, gapRow, foot}
+}
+
+// mascotSpec describes one domain's corner character: its display name,
+// its accent color, and its two block-art animation frames.
+type mascotSpec struct {
+	// Name is the short, DevFlow-flavored nickname rendered under the
+	// mascot (e.g. "GitMaster" for git) — playful but still legible as
+	// "this corner is about git."
+	Name string
+	// Color is the mascot's accent color, applied to both its art and
+	// its name.
+	Color lipgloss.AdaptiveColor
+	// Frames holds the mascot's two animation frames (see buildFrame).
+	// Frame 0 is its idle pose; frame 1 is its own distinct "in-motion"
+	// pose — what specifically changes between the two (an antenna
+	// tip, a rocking base, a folder tab flap, ...) differs per mascot,
+	// which is what gives each corner its own little animation instead
+	// of all four moving in lockstep the same way.
+	Frames [2][]string
+}
+
+// mascots holds the four corner characters, one per DevFlow domain, in
+// the order View places them: top-left, top-right, bottom-left,
+// bottom-right.
+var mascots = [4]mascotSpec{
+	{ // git, top-left: a single center antenna that forks outward
+		// between frames (branching), eyes as a round pair, one
+		// trunk-like foot that steps a column over.
+		Name:  "GitMaster",
+		Color: lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FB923C"},
+		Frames: [2][]string{
+			buildFrame(".....#.#.....", ".##..###..##.", "......#......"),
+			buildFrame("....#...#....", headRow, ".....#......."),
+		},
 	},
-	{
-		"##.......##",
-		"###########",
-		"###########",
-		"###########",
-		"###########",
-		"###########",
-		"...........",
-		"...##......",
+	{ // docker, top-right: no topper at all (a flush, flat roof, like
+		// a container), a wide visor-style eye band, and a wide flat
+		// base that rocks side to side between frames.
+		Name:  "Dockzilla",
+		Color: lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"},
+		Frames: [2][]string{
+			buildFrame(gapRow, "##.........##", headRow),
+			buildFrame(gapRow, headRow, ".#########..."),
+		},
+	},
+	{ // tmux, bottom-left: twin toppers that slide between an outer
+		// and inner stance (panes splitting/merging), four small
+		// grid-arranged eyes, and twin feet that slide the same way.
+		Name:  "PaneMan",
+		Color: lipgloss.AdaptiveColor{Light: "#15803D", Dark: "#4ADE80"},
+		Frames: [2][]string{
+			buildFrame("...#.....#...", ".##.##.##.##.", ".....#.#....."),
+			buildFrame(".....#.#.....", headRow, "....#...#...."),
+		},
+	},
+	{ // projects, bottom-right: an asymmetric folder-tab topper that
+		// shifts a column over, a single wide "cyclops" eye, and twin
+		// feet that hop inward between frames.
+		Name:  "ProjectPal",
+		Color: lipgloss.AdaptiveColor{Light: "#A21CAF", Dark: "#E879F9"},
+		Frames: [2][]string{
+			buildFrame("..##.........", ".####...####.", "...##...##..."),
+			buildFrame("...##........", headRow, "....##.##...."),
+		},
 	},
 }
 
-// mascotBitmapWidth is the number of grid cells across each row of
-// mascotBitmapFrames. mascotWidth/mascotHeight are the resulting
-// rendered size in terminal cells (mascotBitmapWidth doubled, since each
-// grid cell expands to two terminal columns) — used by View to lay the
-// four corners out without measuring each mascot individually.
-const (
-	mascotBitmapWidth = 11
-	mascotWidth       = mascotBitmapWidth * 2
-	mascotHeight      = 8
-)
-
-// renderMascot expands animation frame index frame of mascotBitmapFrames
-// into block-art text and renders it in style.
+// renderMascotArt expands a mascot animation frame (one of
+// mascotSpec.Frames' two []string bitmaps) into block-art text, using
+// the same dot-matrix technique banner.Render uses for the DEVFLOW
+// wordmark: each bitmap cell becomes a filled ("██") or empty ("  ")
+// pair of terminal columns (two columns per cell keeps the shape
+// roughly square, since terminal cells are taller than they are wide).
 //
 // Parameters:
-//   - frame: which entry of mascotBitmapFrames to render (0 or 1).
-//   - style: the (already color-configured) style to render the mascot
-//     in — see gitColor/dockerColor/tmuxColor/projectsColor.
+//   - rows: one of a mascotSpec's Frames entries — mascotHeight rows of
+//     mascotBitmapWidth cells each.
+//   - style: the (already color-configured) style to render the art in.
 //
-// Returns the styled, multi-line mascot string, mascotWidth cells wide
-// and mascotHeight lines tall.
-func renderMascot(frame int, style lipgloss.Style) string {
-	bitmap := mascotBitmapFrames[frame]
-	lines := make([]string, len(bitmap))
-	for i, row := range bitmap {
+// Returns the styled, multi-line art string, mascotWidth cells wide and
+// mascotHeight lines tall.
+func renderMascotArt(rows []string, style lipgloss.Style) string {
+	lines := make([]string, len(rows))
+	for i, row := range rows {
 		var b strings.Builder
 		for _, cell := range row {
 			if cell == '#' {
@@ -114,6 +167,17 @@ func renderMascot(frame int, style lipgloss.Style) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// renderCorner renders one full corner block for spec: its art at
+// animation frame frameIdx, a blank line, and its name caption
+// underneath — both in spec.Color. This is what View places in each of
+// the four screen corners.
+func renderCorner(spec mascotSpec, frameIdx int) string {
+	style := lipgloss.NewStyle().Foreground(spec.Color)
+	art := renderMascotArt(spec.Frames[frameIdx], style)
+	name := style.Bold(true).Render(spec.Name)
+	return lipgloss.JoinVertical(lipgloss.Center, art, "", name)
+}
+
 // minWidthForMascots and minHeightForMascots are the smallest terminal
 // dimensions at which View still has room to place all four corner
 // mascots without them colliding with the centered banner. Below this,
@@ -121,7 +185,7 @@ func renderMascot(frame int, style lipgloss.Style) string {
 // mascots existed.
 const (
 	minWidthForMascots  = 60
-	minHeightForMascots = 30
+	minHeightForMascots = 34
 )
 
 // frameInterval is how long each mascot animation frame is held before
@@ -185,7 +249,7 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		return m, nil
 
 	case frameMsg:
-		m.frame = (m.frame + 1) % len(mascotBitmapFrames)
+		m.frame = (m.frame + 1) % len(mascots[0].Frames)
 		return m, tickFrame()
 
 	case tea.KeyMsg:
@@ -199,11 +263,12 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 // View renders the DevFlow banner (as a purple-to-yellow gradient), plus
 // the tagline and continue hint, centered in the terminal once its size
 // is known. Once the terminal is large enough (see
-// minWidthForMascots/minHeightForMascots), it also places a block-art
-// mascot — animated between mascotBitmapFrames' two frames — in each of
-// the four corners: git top-left, docker top-right, tmux bottom-left,
-// projects bottom-right, so the splash reads as a small crew greeting
-// the user rather than a bare logo screen.
+// minWidthForMascots/minHeightForMascots), it also places one of the
+// four mascots (see the mascots slice) — its art, animated between its
+// two frames, plus its name caption — in each screen corner in mascots'
+// order (top-left, top-right, bottom-left, bottom-right), so the splash
+// reads as a small crew greeting the user rather than a bare logo
+// screen.
 func (m Model) View() string {
 	bannerLines := strings.Split(banner.Render("DEVFLOW", "██", "  "), "\n")
 	gradientBanner := theme.Gradient(bannerLines, gradientFrom, gradientTo)
@@ -225,16 +290,16 @@ func (m Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 	}
 
-	gitMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(gitColor))
-	dockerMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(dockerColor))
-	tmuxMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(tmuxColor))
-	projectsMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(projectsColor))
+	topLeft := renderCorner(mascots[0], m.frame)
+	topRight := renderCorner(mascots[1], m.frame)
+	bottomLeft := renderCorner(mascots[2], m.frame)
+	bottomRight := renderCorner(mascots[3], m.frame)
 
 	spacer := strings.Repeat(" ", m.width-2*mascotWidth)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, gitMascot, spacer, dockerMascot)
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, tmuxMascot, spacer, projectsMascot)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, topLeft, spacer, topRight)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, bottomLeft, spacer, bottomRight)
 
-	middleHeight := m.height - 2*mascotHeight - 2
+	middleHeight := m.height - 2*cornerHeight - 2
 	middle := lipgloss.Place(m.width, middleHeight, lipgloss.Center, lipgloss.Center, content)
 
 	return strings.Join([]string{topRow, "", middle, "", bottomRow}, "\n")

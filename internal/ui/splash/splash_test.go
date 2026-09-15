@@ -88,7 +88,7 @@ func TestUpdateAdvancesMascotFrameOnTickAndReschedules(t *testing.T) {
 
 func TestUpdateWrapsMascotFrameAroundFrameCount(t *testing.T) {
 	m := New(&fakeScreen{})
-	m.frame = len(mascotBitmapFrames) - 1
+	m.frame = len(mascots[0].Frames) - 1
 
 	got, _ := m.Update(frameMsg{})
 
@@ -135,11 +135,6 @@ func TestViewCentersOnceSizeKnown(t *testing.T) {
 	}
 }
 
-// mascotTopRowPrefix is the expansion of mascotBitmapFrames[0]'s first
-// row's leading tab ("##" -> "████"), used below to detect whether a
-// corner mascot was actually placed at the very start of the view.
-const mascotTopRowPrefix = "████"
-
 func TestViewIncludesDomainMascotsWhenTerminalLargeEnough(t *testing.T) {
 	m := New(&fakeScreen{})
 
@@ -150,8 +145,10 @@ func TestViewIncludesDomainMascotsWhenTerminalLargeEnough(t *testing.T) {
 	if len(lines) != minHeightForMascots {
 		t.Fatalf("expected mascotted view to still fill the terminal height (%d lines), got %d", minHeightForMascots, len(lines))
 	}
-	if !strings.HasPrefix(lines[0], mascotTopRowPrefix) {
-		t.Errorf("expected the top-left corner mascot at the start of line 0, got %q", lines[0])
+	for _, spec := range mascots {
+		if !strings.Contains(view, spec.Name) {
+			t.Errorf("expected view to contain mascot name %q, got %q", spec.Name, view)
+		}
 	}
 }
 
@@ -161,17 +158,36 @@ func TestViewOmitsDomainMascotsWhenTerminalTooSmall(t *testing.T) {
 	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForMascots - 1, Height: minHeightForMascots})
 	view := sized.(Model).View()
 
-	lines := strings.Split(view, "\n")
-	if strings.HasPrefix(lines[0], mascotTopRowPrefix) {
-		t.Error("expected no corner mascot on a terminal narrower than minWidthForMascots")
+	if strings.Contains(view, mascots[0].Name) {
+		t.Errorf("expected no mascot names on a terminal narrower than minWidthForMascots, got %q in view", mascots[0].Name)
 	}
 	if !strings.Contains(view, "press any key") {
 		t.Error("expected the plain centered content to still render")
 	}
 }
 
-func TestRenderMascotHasFixedDimensions(t *testing.T) {
-	got := renderMascot(0, lipgloss.NewStyle())
+// TestMascotFramesHaveFixedDimensions guards the hand-written bitmaps in
+// the mascots slice: every row of every frame of every mascot must be
+// exactly mascotBitmapWidth cells, and every frame must have exactly
+// mascotHeight rows, or the corner layout math in View (which assumes a
+// single fixed mascotWidth/mascotHeight for all four) breaks silently.
+func TestMascotFramesHaveFixedDimensions(t *testing.T) {
+	for _, spec := range mascots {
+		for f, rows := range spec.Frames {
+			if len(rows) != mascotHeight {
+				t.Fatalf("%s frame %d: expected %d rows, got %d", spec.Name, f, mascotHeight, len(rows))
+			}
+			for i, row := range rows {
+				if w := len([]rune(row)); w != mascotBitmapWidth {
+					t.Errorf("%s frame %d row %d: expected %d cells, got %d (%q)", spec.Name, f, i, mascotBitmapWidth, w, row)
+				}
+			}
+		}
+	}
+}
+
+func TestRenderMascotArtHasFixedRenderedDimensions(t *testing.T) {
+	got := renderMascotArt(mascots[0].Frames[0], lipgloss.NewStyle())
 
 	lines := strings.Split(got, "\n")
 	if len(lines) != mascotHeight {
@@ -184,11 +200,22 @@ func TestRenderMascotHasFixedDimensions(t *testing.T) {
 	}
 }
 
-func TestRenderMascotFramesDiffer(t *testing.T) {
-	idle := renderMascot(0, lipgloss.NewStyle())
-	blinkWave := renderMascot(1, lipgloss.NewStyle())
+func TestMascotFramesDifferPerMascot(t *testing.T) {
+	for _, spec := range mascots {
+		f0 := strings.Join(spec.Frames[0], "\n")
+		f1 := strings.Join(spec.Frames[1], "\n")
+		if f0 == f1 {
+			t.Errorf("%s: expected the idle and animated frames to differ", spec.Name)
+		}
+	}
+}
 
-	if idle == blinkWave {
-		t.Error("expected the idle and blink/wave frames to render differently")
+func TestMascotNamesAreDistinct(t *testing.T) {
+	seen := make(map[string]bool)
+	for _, spec := range mascots {
+		if seen[spec.Name] {
+			t.Errorf("duplicate mascot name %q", spec.Name)
+		}
+		seen[spec.Name] = true
 	}
 }

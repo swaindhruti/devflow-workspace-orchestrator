@@ -5,6 +5,7 @@ package splash
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -26,22 +27,11 @@ var (
 	gradientTo   = lipgloss.Color("#FACC15")
 )
 
-// Domain mascot glyphs and colors. Each of DevFlow's four domains — git,
-// docker, tmux, and the project registry itself — gets a one-character
-// glyph and its own accent color. newMascot uses these to build the four
-// corner characters placed by View, so the corners double as an
-// at-a-glance legend of DevFlow's feature set. Glyphs are chosen from
-// narrow, single-cell Unicode symbols (not emoji, which often render
-// double-width and break the mascots' fixed layout) and colors are
-// AdaptiveColor so each mascot stays legible in both light and dark
-// terminals.
-const (
-	gitGlyph      = "⎇" // branch symbol
-	dockerGlyph   = "▦" // stacked containers
-	tmuxGlyph     = "⊞" // split panes
-	projectsGlyph = "⌂" // project home
-)
-
+// Domain mascot colors — one accent per DevFlow domain (git, docker,
+// tmux, and the project registry itself). All four mascots share the
+// exact same pixel shape (see mascotBitmapFrames); color is what tells
+// them apart, the same way the reference "little robot" design this was
+// modeled on reads as a single character purely through its fill color.
 var (
 	gitColor      = lipgloss.AdaptiveColor{Light: "#C2410C", Dark: "#FB923C"}
 	dockerColor   = lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}
@@ -49,51 +39,78 @@ var (
 	projectsColor = lipgloss.AdaptiveColor{Light: "#A21CAF", Dark: "#E879F9"}
 )
 
-// mascotWidth and mascotHeight are the fixed dimensions (in terminal
-// cells) of every character rendered by newMascot. Keeping every mascot
-// identical in size is what makes the corner layout math in View a
-// simple subtraction rather than a per-mascot measurement.
-const (
-	mascotWidth  = 9
-	mascotHeight = 7
-)
-
-// mascotBody is the shared block-art robot body every domain mascot is
-// built from: a rounded head with two eyes, a small mouth, and two
-// planted feet. Only the antenna glyph on top (see newMascot) and the
-// color vary per domain, so the four corner characters read as one
-// consistent cast — like a small crew representing DevFlow's
-// capabilities — rather than four unrelated icons.
-var mascotBody = []string{
-	" ╭─────╮ ",
-	" │ ◕ ◕ │ ",
-	" │  ▾  │ ",
-	" ╰┬───┬╯ ",
-	"   │ │   ",
+// mascotBitmapFrames are the two block-art animation frames every corner
+// mascot cycles between, using the same dot-matrix technique
+// banner.Render uses for the DEVFLOW wordmark: each cell of the grid
+// expands to a filled ("█") or empty (" ") pair of terminal columns (two
+// columns per cell keeps the shape roughly square, since terminal cells
+// are taller than they are wide). The shape — a wide blocky head with a
+// small tab at each top corner, two square eyes, and two short feet — is
+// modeled on a simple blocky robot mascot reference.
+//
+// Frame 0 is the idle pose: eyes open (the two empty squares), feet
+// planted evenly. Frame 1 is the blink-and-wave pose: eyes shut (filled
+// solid, a common pixel-art blink convention) and one foot stepped over,
+// reading as a small wave/bob. Cycling between the two on a timer (see
+// frameMsg/tickFrame) is what gives the corner mascots their motion.
+var mascotBitmapFrames = [2][]string{
+	{
+		"##.......##",
+		"###########",
+		"###########",
+		"##..###..##",
+		"##..###..##",
+		"###########",
+		"...........",
+		"..##...##..",
+	},
+	{
+		"##.......##",
+		"###########",
+		"###########",
+		"###########",
+		"###########",
+		"###########",
+		"...........",
+		"...##......",
+	},
 }
 
-// newMascot renders one domain's corner character: mascotBody topped
-// with an antenna holding up the domain's glyph, styled in the domain's
-// color. It is a single fixed frame — no wave/blink animation — since
-// the mascots need to stay cheap to render (precomputed strings, no
-// tea.Tick, no per-frame state) and a moving character in only one
-// corner while the other three stood still would read as inconsistent.
+// mascotBitmapWidth is the number of grid cells across each row of
+// mascotBitmapFrames. mascotWidth/mascotHeight are the resulting
+// rendered size in terminal cells (mascotBitmapWidth doubled, since each
+// grid cell expands to two terminal columns) — used by View to lay the
+// four corners out without measuring each mascot individually.
+const (
+	mascotBitmapWidth = 11
+	mascotWidth       = mascotBitmapWidth * 2
+	mascotHeight      = 8
+)
+
+// renderMascot expands animation frame index frame of mascotBitmapFrames
+// into block-art text and renders it in style.
 //
 // Parameters:
-//   - glyph: the single-cell symbol identifying the domain (e.g.
-//     gitGlyph). Must be exactly one terminal cell wide so the antenna
-//     stays centered over mascotBody.
+//   - frame: which entry of mascotBitmapFrames to render (0 or 1).
 //   - style: the (already color-configured) style to render the mascot
 //     in — see gitColor/dockerColor/tmuxColor/projectsColor.
 //
 // Returns the styled, multi-line mascot string, mascotWidth cells wide
 // and mascotHeight lines tall.
-func newMascot(glyph string, style lipgloss.Style) string {
-	pad := strings.Repeat(" ", (mascotWidth-1)/2)
-	lines := append([]string{
-		pad + glyph + pad,
-		pad + "│" + pad,
-	}, mascotBody...)
+func renderMascot(frame int, style lipgloss.Style) string {
+	bitmap := mascotBitmapFrames[frame]
+	lines := make([]string, len(bitmap))
+	for i, row := range bitmap {
+		var b strings.Builder
+		for _, cell := range row {
+			if cell == '#' {
+				b.WriteString("██")
+			} else {
+				b.WriteString("  ")
+			}
+		}
+		lines[i] = b.String()
+	}
 	return style.Render(strings.Join(lines, "\n"))
 }
 
@@ -107,13 +124,33 @@ const (
 	minHeightForMascots = 30
 )
 
+// frameInterval is how long each mascot animation frame is held before
+// advancing to the next — see frameMsg/tickFrame.
+const frameInterval = 700 * time.Millisecond
+
+// frameMsg is sent by tickFrame to advance the corner mascots' animation
+// by one frame. It carries no data; Update only needs its occurrence.
+type frameMsg struct{}
+
+// tickFrame schedules the next frameMsg, frameInterval from now. Model
+// calls this both from Init (to start the animation loop) and from
+// Update's frameMsg case (to keep it going) — the splash screen's
+// keypress-driven transition to the next screen is unaffected by this,
+// since frameMsg is a distinct message type from tea.KeyMsg.
+func tickFrame() tea.Cmd {
+	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameMsg{} })
+}
+
 // Model is the splash screen. It shows the DevFlow banner and hands
 // control to the configured next screen.Screen as soon as the user
 // presses any key — there is no automatic timeout, since a splash that
-// disappears before it can be read defeats its own purpose.
+// disappears before it can be read defeats its own purpose. The corner
+// mascots animate on their own timer (frame), but that timer only
+// advances frame; it never triggers the screen transition itself.
 type Model struct {
 	next          screen.Screen
 	width, height int
+	frame         int
 }
 
 // New constructs a splash screen that transitions to next once the user
@@ -127,21 +164,29 @@ func New(next screen.Screen) Model {
 	return Model{next: next}
 }
 
-// Init has nothing to kick off: the splash screen is purely
-// keypress-driven, so there is no timer or data load to start here.
+// Init starts the corner mascots' animation loop (see
+// frameMsg/tickFrame). The splash's screen transition itself stays
+// purely keypress-driven — there is no timer or data load involved in
+// that — this only keeps the mascots blinking and waving while the user
+// reads the screen.
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tickFrame()
 }
 
-// Update advances to the configured next screen on any keypress, and
-// tracks the terminal size (from tea.WindowSizeMsg) so View can center
-// the banner. Every other message is ignored: the splash screen has
-// nothing else to react to.
+// Update advances to the configured next screen on any keypress, tracks
+// the terminal size (from tea.WindowSizeMsg) so View can center the
+// banner, and advances the corner mascots' animation frame on each
+// frameMsg (rescheduling the next one so the animation keeps going).
+// Every other message is ignored.
 func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+
+	case frameMsg:
+		m.frame = (m.frame + 1) % len(mascotBitmapFrames)
+		return m, tickFrame()
 
 	case tea.KeyMsg:
 		return m.next, m.next.Init()
@@ -154,12 +199,11 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 // View renders the DevFlow banner (as a purple-to-yellow gradient), plus
 // the tagline and continue hint, centered in the terminal once its size
 // is known. Once the terminal is large enough (see
-// minWidthForMascots/minHeightForMascots), it also places a static,
-// color-coded block-art character in each of the four corners — git
-// top-left, docker top-right, tmux bottom-left, projects bottom-right —
-// so the splash doubles as an at-a-glance legend of DevFlow's feature
-// set, and reads as a small crew greeting the user rather than a bare
-// logo screen.
+// minWidthForMascots/minHeightForMascots), it also places a block-art
+// mascot — animated between mascotBitmapFrames' two frames — in each of
+// the four corners: git top-left, docker top-right, tmux bottom-left,
+// projects bottom-right, so the splash reads as a small crew greeting
+// the user rather than a bare logo screen.
 func (m Model) View() string {
 	bannerLines := strings.Split(banner.Render("DEVFLOW", "██", "  "), "\n")
 	gradientBanner := theme.Gradient(bannerLines, gradientFrom, gradientTo)
@@ -181,10 +225,10 @@ func (m Model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 	}
 
-	gitMascot := newMascot(gitGlyph, lipgloss.NewStyle().Foreground(gitColor))
-	dockerMascot := newMascot(dockerGlyph, lipgloss.NewStyle().Foreground(dockerColor))
-	tmuxMascot := newMascot(tmuxGlyph, lipgloss.NewStyle().Foreground(tmuxColor))
-	projectsMascot := newMascot(projectsGlyph, lipgloss.NewStyle().Foreground(projectsColor))
+	gitMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(gitColor))
+	dockerMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(dockerColor))
+	tmuxMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(tmuxColor))
+	projectsMascot := renderMascot(m.frame, lipgloss.NewStyle().Foreground(projectsColor))
 
 	spacer := strings.Repeat(" ", m.width-2*mascotWidth)
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, gitMascot, spacer, dockerMascot)

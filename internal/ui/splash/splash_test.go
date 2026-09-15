@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 )
@@ -24,11 +25,11 @@ func (f *fakeScreen) Init() tea.Cmd {
 func (f *fakeScreen) Update(tea.Msg) (screen.Screen, tea.Cmd) { return f, nil }
 func (f *fakeScreen) View() string                            { return "fake" }
 
-func TestInitReturnsNilCommand(t *testing.T) {
+func TestInitStartsMascotAnimationTicker(t *testing.T) {
 	m := New(&fakeScreen{})
 
-	if cmd := m.Init(); cmd != nil {
-		t.Errorf("expected nil Cmd (splash has no timer or load to kick off), got %v", cmd)
+	if cmd := m.Init(); cmd == nil {
+		t.Error("expected Init to return a Cmd that starts the corner mascots' animation ticker")
 	}
 }
 
@@ -65,6 +66,35 @@ func TestUpdateIgnoresOtherMessages(t *testing.T) {
 	}
 	if next.initCalled {
 		t.Error("did not expect the next screen to be activated for an unrelated message")
+	}
+}
+
+func TestUpdateAdvancesMascotFrameOnTickAndReschedules(t *testing.T) {
+	m := New(&fakeScreen{})
+
+	got, cmd := m.Update(frameMsg{})
+
+	model, ok := got.(Model)
+	if !ok {
+		t.Fatalf("expected Update to return Model, got %T", got)
+	}
+	if model.frame != 1 {
+		t.Errorf("expected frame to advance from 0 to 1, got %d", model.frame)
+	}
+	if cmd == nil {
+		t.Error("expected Update to reschedule the next animation tick")
+	}
+}
+
+func TestUpdateWrapsMascotFrameAroundFrameCount(t *testing.T) {
+	m := New(&fakeScreen{})
+	m.frame = len(mascotBitmapFrames) - 1
+
+	got, _ := m.Update(frameMsg{})
+
+	model := got.(Model)
+	if model.frame != 0 {
+		t.Errorf("expected frame to wrap around to 0, got %d", model.frame)
 	}
 }
 
@@ -105,13 +135,10 @@ func TestViewCentersOnceSizeKnown(t *testing.T) {
 	}
 }
 
-func TestViewHasNoMascotBesideBannerWhenSizeUnknown(t *testing.T) {
-	m := New(&fakeScreen{})
-
-	if strings.Contains(m.View(), "◕") {
-		t.Error("expected no mascot beside the banner before its transition into corner mascots (size unknown)")
-	}
-}
+// mascotTopRowPrefix is the expansion of mascotBitmapFrames[0]'s first
+// row's leading tab ("##" -> "████"), used below to detect whether a
+// corner mascot was actually placed at the very start of the view.
+const mascotTopRowPrefix = "████"
 
 func TestViewIncludesDomainMascotsWhenTerminalLargeEnough(t *testing.T) {
 	m := New(&fakeScreen{})
@@ -119,18 +146,12 @@ func TestViewIncludesDomainMascotsWhenTerminalLargeEnough(t *testing.T) {
 	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForMascots, Height: minHeightForMascots})
 	view := sized.(Model).View()
 
-	for _, glyph := range []string{gitGlyph, dockerGlyph, tmuxGlyph, projectsGlyph} {
-		if !strings.Contains(view, glyph) {
-			t.Errorf("expected view to contain domain mascot glyph %q, got %q", glyph, view)
-		}
-	}
-	if !strings.Contains(view, "◕") {
-		t.Error("expected view to contain the block-art mascot bodies")
-	}
-
 	lines := strings.Split(view, "\n")
 	if len(lines) != minHeightForMascots {
-		t.Errorf("expected mascotted view to still fill the terminal height (%d lines), got %d", minHeightForMascots, len(lines))
+		t.Fatalf("expected mascotted view to still fill the terminal height (%d lines), got %d", minHeightForMascots, len(lines))
+	}
+	if !strings.HasPrefix(lines[0], mascotTopRowPrefix) {
+		t.Errorf("expected the top-left corner mascot at the start of line 0, got %q", lines[0])
 	}
 }
 
@@ -140,10 +161,34 @@ func TestViewOmitsDomainMascotsWhenTerminalTooSmall(t *testing.T) {
 	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForMascots - 1, Height: minHeightForMascots})
 	view := sized.(Model).View()
 
-	if strings.Contains(view, gitGlyph) {
-		t.Error("expected domain mascots to be omitted on a terminal narrower than minWidthForMascots")
+	lines := strings.Split(view, "\n")
+	if strings.HasPrefix(lines[0], mascotTopRowPrefix) {
+		t.Error("expected no corner mascot on a terminal narrower than minWidthForMascots")
 	}
 	if !strings.Contains(view, "press any key") {
 		t.Error("expected the plain centered content to still render")
+	}
+}
+
+func TestRenderMascotHasFixedDimensions(t *testing.T) {
+	got := renderMascot(0, lipgloss.NewStyle())
+
+	lines := strings.Split(got, "\n")
+	if len(lines) != mascotHeight {
+		t.Fatalf("expected %d lines, got %d", mascotHeight, len(lines))
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w != mascotWidth {
+			t.Errorf("line %d: expected width %d, got %d (%q)", i, mascotWidth, w, line)
+		}
+	}
+}
+
+func TestRenderMascotFramesDiffer(t *testing.T) {
+	idle := renderMascot(0, lipgloss.NewStyle())
+	blinkWave := renderMascot(1, lipgloss.NewStyle())
+
+	if idle == blinkWave {
+		t.Error("expected the idle and blink/wave frames to render differently")
 	}
 }

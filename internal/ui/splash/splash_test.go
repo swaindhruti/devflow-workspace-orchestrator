@@ -25,11 +25,11 @@ func (f *fakeScreen) Init() tea.Cmd {
 func (f *fakeScreen) Update(tea.Msg) (screen.Screen, tea.Cmd) { return f, nil }
 func (f *fakeScreen) View() string                            { return "fake" }
 
-func TestInitStartsMascotAnimationTicker(t *testing.T) {
+func TestInitReturnsNilCommand(t *testing.T) {
 	m := New(&fakeScreen{})
 
-	if cmd := m.Init(); cmd == nil {
-		t.Error("expected Init to return a Cmd that starts the corner mascots' animation ticker")
+	if cmd := m.Init(); cmd != nil {
+		t.Errorf("expected nil Cmd (splash has no timer or load to kick off), got %v", cmd)
 	}
 }
 
@@ -66,35 +66,6 @@ func TestUpdateIgnoresOtherMessages(t *testing.T) {
 	}
 	if next.initCalled {
 		t.Error("did not expect the next screen to be activated for an unrelated message")
-	}
-}
-
-func TestUpdateAdvancesMascotFrameOnTickAndReschedules(t *testing.T) {
-	m := New(&fakeScreen{})
-
-	got, cmd := m.Update(frameMsg{})
-
-	model, ok := got.(Model)
-	if !ok {
-		t.Fatalf("expected Update to return Model, got %T", got)
-	}
-	if model.frame != 1 {
-		t.Errorf("expected frame to advance from 0 to 1, got %d", model.frame)
-	}
-	if cmd == nil {
-		t.Error("expected Update to reschedule the next animation tick")
-	}
-}
-
-func TestUpdateWrapsMascotFrameAroundFrameCount(t *testing.T) {
-	m := New(&fakeScreen{})
-	m.frame = len(mascots[0].Frames) - 1
-
-	got, _ := m.Update(frameMsg{})
-
-	model := got.(Model)
-	if model.frame != 0 {
-		t.Errorf("expected frame to wrap around to 0, got %d", model.frame)
 	}
 }
 
@@ -166,28 +137,26 @@ func TestViewOmitsDomainMascotsWhenTerminalTooSmall(t *testing.T) {
 	}
 }
 
-// TestMascotFramesHaveFixedDimensions guards the hand-written bitmaps in
-// the mascots slice: every row of every frame of every mascot must be
-// exactly mascotBitmapWidth cells, and every frame must have exactly
-// mascotHeight rows, or the corner layout math in View (which assumes a
-// single fixed mascotWidth/mascotHeight for all four) breaks silently.
-func TestMascotFramesHaveFixedDimensions(t *testing.T) {
+// TestMascotArtHasFixedDimensions guards the hand-written bitmaps in
+// the mascots slice: every row of every mascot's Art must be exactly
+// mascotBitmapWidth cells, and every Art must have exactly mascotHeight
+// rows, or the corner layout math in View (which assumes a single fixed
+// mascotWidth/mascotHeight for all four) breaks silently.
+func TestMascotArtHasFixedDimensions(t *testing.T) {
 	for _, spec := range mascots {
-		for f, rows := range spec.Frames {
-			if len(rows) != mascotHeight {
-				t.Fatalf("%s frame %d: expected %d rows, got %d", spec.Name, f, mascotHeight, len(rows))
-			}
-			for i, row := range rows {
-				if w := len([]rune(row)); w != mascotBitmapWidth {
-					t.Errorf("%s frame %d row %d: expected %d cells, got %d (%q)", spec.Name, f, i, mascotBitmapWidth, w, row)
-				}
+		if len(spec.Art) != mascotHeight {
+			t.Fatalf("%s: expected %d rows, got %d", spec.Name, mascotHeight, len(spec.Art))
+		}
+		for i, row := range spec.Art {
+			if w := len([]rune(row)); w != mascotBitmapWidth {
+				t.Errorf("%s row %d: expected %d cells, got %d (%q)", spec.Name, i, mascotBitmapWidth, w, row)
 			}
 		}
 	}
 }
 
 func TestRenderMascotArtHasFixedRenderedDimensions(t *testing.T) {
-	got := renderMascotArt(mascots[0].Frames[0], lipgloss.NewStyle())
+	got := renderMascotArt(mascots[0].Art, lipgloss.NewStyle())
 
 	lines := strings.Split(got, "\n")
 	if len(lines) != mascotHeight {
@@ -200,13 +169,14 @@ func TestRenderMascotArtHasFixedRenderedDimensions(t *testing.T) {
 	}
 }
 
-func TestMascotFramesDifferPerMascot(t *testing.T) {
+func TestMascotArtDiffersPerMascot(t *testing.T) {
+	seen := make(map[string]string)
 	for _, spec := range mascots {
-		f0 := strings.Join(spec.Frames[0], "\n")
-		f1 := strings.Join(spec.Frames[1], "\n")
-		if f0 == f1 {
-			t.Errorf("%s: expected the idle and animated frames to differ", spec.Name)
+		art := strings.Join(spec.Art, "\n")
+		if other, ok := seen[art]; ok {
+			t.Errorf("%s and %s render identical art; expected each mascot's design to be distinct", spec.Name, other)
 		}
+		seen[art] = spec.Name
 	}
 }
 

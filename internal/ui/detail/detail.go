@@ -260,6 +260,8 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 			return m.updateAddCommand(msg)
 		case modeConfirmDeleteCommand:
 			return m.updateConfirmDeleteCommand(msg)
+		case modeRunning:
+			return m.updateRunning(msg)
 		default:
 			return m.updateView(msg)
 		}
@@ -319,8 +321,61 @@ func (m Model) updateView(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 			m.mode = modeConfirmDeleteCommand
 			m.status = ""
 		}
+
+	case "r":
+		if m.cmdCursor < len(m.project.RunCommands) {
+			m.mode = modeRunning
+			m.runCommand = m.project.RunCommands[m.cmdCursor]
+			m.runProc, m.runErr = nil, nil
+			m.runSnap = runner.Snapshot{}
+
+			_, contentWidth, boxHeight := m.layoutDims()
+			vw, vh := runningViewportSize(contentWidth, boxHeight)
+			m.viewport = viewport.New(vw, vh)
+
+			return m, startCommand(m.app, m.project.ID, m.runCommand.ID)
+		}
 	}
 	return m, nil
+}
+
+// updateRunning handles a keypress while a saved command is running or
+// has just finished. "s" stops it early without leaving the pane — the
+// next poll tick observes the resulting StateStopped and
+// handleProcessPolled's own poll loop ends itself the same way it would
+// for any other finish. "esc" leaves the pane, stopping the process
+// first if it's still running: there's no other screen that can reach
+// this process, so leaving without stopping it would orphan it with no
+// way to stop it later. Anything else is forwarded to the viewport so
+// its own scroll bindings (arrow keys, page up/down, ...) work for
+// free.
+func (m Model) updateRunning(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
+	running := m.runProc != nil && m.runSnap.State == runner.StateRunning
+
+	switch msg.String() {
+	case "s":
+		if running {
+			_ = m.app.StopCommand(m.runProc.ID)
+		}
+		return m, nil
+
+	case "esc":
+		if running {
+			_ = m.app.StopCommand(m.runProc.ID)
+		}
+		m.mode = modeView
+		m.runCommand = project.Command{}
+		m.runProc, m.runErr = nil, nil
+		m.runSnap = runner.Snapshot{}
+		return m, nil
+	}
+
+	_, contentWidth, boxHeight := m.layoutDims()
+	m.viewport.Width, m.viewport.Height = runningViewportSize(contentWidth, boxHeight)
+
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 // handleRunStarted stores the outcome of startCommand. A launch failure
@@ -354,6 +409,8 @@ func (m Model) handleProcessPolled(msg processPolledMsg) (screen.Screen, tea.Cmd
 	}
 
 	m.runSnap = msg.snap
+	_, contentWidth, boxHeight := m.layoutDims()
+	m.viewport.Width, m.viewport.Height = runningViewportSize(contentWidth, boxHeight)
 	m.viewport.SetContent(buildRunOutput(msg.snap))
 	m.viewport.GotoBottom()
 
@@ -505,11 +562,12 @@ func (m *Model) deleteSelectedCommand() {
 
 // sectionKeyHints builds the footer's keybinding legend for the given
 // section: the section-switch hint is always present, and the
-// select/add/delete-command hints appear only on sectionCommands (and
-// select/delete only when there's at least one command), so the footer
-// never advertises a key that updateView wouldn't currently honor.
+// select/add/delete/run-command hints appear only on sectionCommands
+// (and select/delete/run only when there's at least one command), so
+// the footer never advertises a key that updateView wouldn't currently
+// honor.
 func sectionKeyHints(s section, hasCommands bool) string {
-	pairs := make([][2]string, 0, 5)
+	pairs := make([][2]string, 0, 6)
 	pairs = append(pairs, [2]string{"←/→", "switch section"})
 	if s == sectionCommands {
 		if hasCommands {
@@ -518,6 +576,7 @@ func sectionKeyHints(s section, hasCommands bool) string {
 		pairs = append(pairs, [2]string{"a", "add command"})
 		if hasCommands {
 			pairs = append(pairs, [2]string{"d", "delete command"})
+			pairs = append(pairs, [2]string{"r", "run selected"})
 		}
 	}
 	pairs = append(pairs, [2]string{"esc", "back"})
@@ -573,22 +632,15 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
-// View renders the screen as a sidebar (renderSidebar) next to a
-// content pane showing only the active section (renderSection), both
-// boxed to the same height via sizedBox so they read as one layout. In
-// modeAddCommand the content pane is the add-command form instead
-// (renderAddCommandForm, which carries its own complete keybinding
-// legend), and the outer footer is skipped entirely rather than showing
-// hints like "esc back" that would mean something different mid-form.
-// Otherwise the footer is sectionKeyHints for the active section, with
-// a delete confirmation or a transient status shown as an extra line
-// above it when there's one to show — the same "never hide the
-// instructions" approach internal/ui/dashboard's footer uses.
-func (m Model) View() string {
-	sidebar := m.renderSidebar()
-	content := m.renderSection()
-
-	var sidebarWidth, contentWidth int
+// layoutDims computes the sidebar/content box sizes View lays out, from
+// the screen's last known terminal size. It's factored out of View
+// (rather than computed only there) so updateRunning and
+// handleProcessPolled can derive the same content-box dimensions to
+// size the running pane's viewport — see runningViewportSize — without
+// duplicating this math or risking it drifting out of sync with what
+// View actually renders. Returns all-zero if the terminal size isn't
+// known yet, same as View's own previous inline version did.
+func (m Model) layoutDims() (sidebarWidth, contentWidth, boxHeight int) {
 	if m.width > 0 {
 		sidebarWidth = clampInt(m.width/4, 16, 24)
 		contentWidth = m.width - sidebarWidth - 1
@@ -596,13 +648,69 @@ func (m Model) View() string {
 			contentWidth = 28
 		}
 	}
-	boxHeight := 0
 	if m.height > 0 {
 		boxHeight = m.height - 4
 		if boxHeight < 8 {
 			boxHeight = 8
 		}
 	}
+	return sidebarWidth, contentWidth, boxHeight
+}
+
+// runningPaneChromeLines is how many of the running pane's lines are
+// fixed chrome rather than the scrollable viewport: heading, a blank
+// line, another blank line, a status-or-blank line, a third blank line,
+// and the keybinding legend — see renderRunningPane. The status line is
+// always present (even while running, as an empty line) specifically so
+// the viewport's height — and therefore the pane's whole layout — stays
+// identical before and after a command finishes, rather than growing by
+// one line the moment a status appears.
+const runningPaneChromeLines = 6
+
+// runningViewportSize computes the width/height budget for the running
+// pane's scrollable viewport from the content box's own outer
+// width/height (as returned by layoutDims), using the same
+// border/padding accounting sizedBox uses internally, minus
+// runningPaneChromeLines. Returns 0, 0 if the content box's size isn't
+// known yet (mirrors sizedBox's own "0 means not yet known" contract).
+func runningViewportSize(contentWidth, boxHeight int) (width, height int) {
+	if contentWidth <= 0 || boxHeight <= 0 {
+		return 0, 0
+	}
+
+	width = contentWidth - sideBoxStyle.GetHorizontalBorderSize() - sideBoxStyle.GetHorizontalPadding()
+	height = boxHeight - sideBoxStyle.GetVerticalBorderSize() - sideBoxStyle.GetVerticalPadding() - runningPaneChromeLines
+
+	if width < 1 {
+		width = 1
+	}
+	if height < 3 {
+		height = 3
+	}
+	return width, height
+}
+
+// View renders the screen as a sidebar (renderSidebar) next to a
+// content pane showing only the active section (renderSection), both
+// boxed to the same height via sizedBox so they read as one layout. In
+// modeAddCommand or modeRunning, the content pane is the add-command
+// form or the running-command pane instead (renderAddCommandForm /
+// renderRunningPane, both of which carry their own complete keybinding
+// legend), and the outer footer is skipped entirely rather than showing
+// hints like "esc back" that would mean something different in either
+// of those. Otherwise the footer is sectionKeyHints for the active
+// section, with a delete confirmation or a transient status shown as an
+// extra line above it when there's one to show — the same "never hide
+// the instructions" approach internal/ui/dashboard's footer uses.
+func (m Model) View() string {
+	sidebarWidth, contentWidth, boxHeight := m.layoutDims()
+
+	if m.mode == modeRunning {
+		m.viewport.Width, m.viewport.Height = runningViewportSize(contentWidth, boxHeight)
+	}
+
+	sidebar := m.renderSidebar()
+	content := m.renderSection()
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
 		sizedBox(sidebar, sidebarWidth, boxHeight),
@@ -610,7 +718,7 @@ func (m Model) View() string {
 		sizedBox(content, contentWidth, boxHeight),
 	)
 
-	if m.mode == modeAddCommand {
+	if m.mode == modeAddCommand || m.mode == modeRunning {
 		return m.centered(body)
 	}
 
@@ -654,11 +762,7 @@ func (m Model) renderSection() string {
 			return m.renderAddCommandForm()
 		}
 		if m.mode == modeRunning {
-			// TODO: replaced with a real running/output pane in a
-			// following change; this placeholder just keeps the build
-			// and existing tests green while the run/poll state machine
-			// lands on its own.
-			return theme.TitleStyle.Render("Running: " + m.runCommand.Name)
+			return m.renderRunningPane()
 		}
 		return m.renderCommandsPane()
 	case sectionGit:
@@ -708,10 +812,62 @@ func (m Model) renderCommandsPane() string {
 
 	help := theme.HelpStyle.Render("Press a to save your first command, e.g. go test ./...")
 	if len(p.RunCommands) > 0 {
-		help = theme.HelpStyle.Render("↑/k ↓/j select   a add another   d delete selected")
+		help = theme.HelpStyle.Render("↑/k ↓/j select   a add another   d delete selected   r run selected")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, section, "", help)
+}
+
+// renderRunningPane shows the currently selected command's live run: a
+// heading naming it, then one of three things depending on how far the
+// run has gotten — an error if RunCommand itself failed to start the
+// process, a "Starting…" placeholder if it started but no poll result
+// has arrived yet, or the scrollable viewport of its combined
+// stdout/stderr (buildRunOutput) — followed, once the process has
+// finished, by a colored exit-status line. The keybinding legend is
+// embedded here (mirroring renderAddCommandForm) rather than left to
+// the outer footer, since "esc" means something specific to this pane
+// (stop-if-running, then leave) that the section-level footer's plain
+// "back" wouldn't convey.
+//
+// The status line and its surrounding blank lines are always present
+// (blank when still running) rather than only appearing once finished,
+// so the viewport's reserved height — see runningPaneChromeLines — and
+// therefore the whole pane's layout stays identical before and after
+// the command settles, instead of the pane growing by a line the
+// moment a status appears.
+func (m Model) renderRunningPane() string {
+	heading := theme.TitleStyle.Render("Running: " + m.runCommand.Name)
+
+	if m.runErr != nil {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			heading, "",
+			lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("failed to start: %v", m.runErr)),
+			"",
+			theme.KeyHints([][2]string{{"esc", "back"}}),
+		)
+	}
+
+	if m.runProc == nil {
+		return lipgloss.JoinVertical(lipgloss.Left, heading, "", theme.SubtleStyle.Render("Starting…"))
+	}
+
+	var status string
+	switch m.runSnap.State {
+	case runner.StateCompleted:
+		status = lipgloss.NewStyle().Foreground(theme.Success).Render(fmt.Sprintf("Exit code %d — completed", m.runSnap.ExitCode))
+	case runner.StateFailed:
+		status = lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("Exit code %d — failed", m.runSnap.ExitCode))
+	case runner.StateStopped:
+		status = lipgloss.NewStyle().Foreground(theme.Warning).Render("Stopped")
+	}
+
+	hints := theme.KeyHints([][2]string{{"↑/k ↓/j", "scroll"}, {"esc", "back to Commands"}})
+	if m.runSnap.State == runner.StateRunning {
+		hints = theme.KeyHints([][2]string{{"↑/k ↓/j", "scroll"}, {"s", "stop"}, {"esc", "stop & leave"}})
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, heading, "", m.viewport.View(), "", status, "", hints)
 }
 
 // renderGitPane shows the project's live Git status

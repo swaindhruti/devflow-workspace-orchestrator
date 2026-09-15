@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -215,7 +216,7 @@ func TestHandleRunStartedStoresLaunchError(t *testing.T) {
 
 func TestHandleProcessPolledRearmsWhileRunningAndUpdatesViewport(t *testing.T) {
 	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
-	m.viewport = viewport.New(80, 10) // a real size, so visibleLines() isn't empty
+	m.width, m.height = 100, 40 // a known terminal size, so the viewport gets sized instead of staying 0x0
 	proc := &runner.Process{}
 	m.runProc = proc
 
@@ -785,7 +786,7 @@ func TestDKeyThenNCancelsWithoutDeletingCommand(t *testing.T) {
 func TestSectionKeyHintsOmitCommandHintsOutsideCommandsSection(t *testing.T) {
 	got := sectionKeyHints(sectionOverview, true)
 
-	if strings.Contains(got, "add command") || strings.Contains(got, "select command") || strings.Contains(got, "delete command") {
+	if strings.Contains(got, "add command") || strings.Contains(got, "select command") || strings.Contains(got, "delete command") || strings.Contains(got, "run selected") {
 		t.Errorf("expected no command-specific hints outside sectionCommands, got %q", got)
 	}
 	if !strings.Contains(got, "switch section") || !strings.Contains(got, "back") {
@@ -796,8 +797,8 @@ func TestSectionKeyHintsOmitCommandHintsOutsideCommandsSection(t *testing.T) {
 func TestSectionKeyHintsOmitSelectAndDeleteWhenNoCommands(t *testing.T) {
 	got := sectionKeyHints(sectionCommands, false)
 
-	if strings.Contains(got, "select command") || strings.Contains(got, "delete command") {
-		t.Errorf("expected no select/delete hints when there are no commands, got %q", got)
+	if strings.Contains(got, "select command") || strings.Contains(got, "delete command") || strings.Contains(got, "run selected") {
+		t.Errorf("expected no select/delete/run hints when there are no commands, got %q", got)
 	}
 	if !strings.Contains(got, "add command") {
 		t.Errorf("expected the add-command hint regardless, got %q", got)
@@ -807,7 +808,172 @@ func TestSectionKeyHintsOmitSelectAndDeleteWhenNoCommands(t *testing.T) {
 func TestSectionKeyHintsIncludeSelectAndDeleteWhenCommandsExist(t *testing.T) {
 	got := sectionKeyHints(sectionCommands, true)
 
-	if !strings.Contains(got, "select command") || !strings.Contains(got, "delete command") {
-		t.Errorf("expected select/delete hints when commands exist, got %q", got)
+	if !strings.Contains(got, "select command") || !strings.Contains(got, "delete command") || !strings.Contains(got, "run selected") {
+		t.Errorf("expected select/delete/run hints when commands exist, got %q", got)
+	}
+}
+
+func TestRKeyStartsRunningModeAndLaunchesTheSelectedCommand(t *testing.T) {
+	a := newTestApp(t)
+	p := seedProjectWithCommand(t, a, "cmd-1", "echo hello")
+
+	m := New(a, &fakeBack{}, p)
+	m.width, m.height = 100, 40
+	m = switchSection(t, m) // Overview -> Commands
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	model := got.(Model)
+
+	if model.mode != modeRunning {
+		t.Fatal("expected r to enter modeRunning")
+	}
+	if model.runCommand.ID != "cmd-1" {
+		t.Errorf("expected the selected command to be captured, got %+v", model.runCommand)
+	}
+	if cmd == nil {
+		t.Fatal("expected a Cmd to launch the process")
+	}
+
+	msg, ok := cmd().(runStartedMsg)
+	if !ok {
+		t.Fatalf("expected the Cmd to produce a runStartedMsg, got %T", cmd())
+	}
+	if msg.err != nil || msg.proc == nil {
+		t.Errorf("expected the command to launch successfully, got proc=%v err=%v", msg.proc, msg.err)
+	}
+}
+
+func TestRKeyIsNoOpWithoutASelectedCommand(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"}) // no RunCommands
+	m = switchSection(t, m)                                    // Overview -> Commands
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	model := got.(Model)
+
+	if model.mode != modeView {
+		t.Error("expected r to be a no-op when there's no command to run")
+	}
+	if cmd != nil {
+		t.Error("expected no command to be launched")
+	}
+}
+
+func TestEscInRunningStopsAStillRunningProcessAndReturnsToView(t *testing.T) {
+	a := newTestApp(t)
+	p := seedProjectWithCommand(t, a, "cmd-1", "sleep 5")
+	proc, err := a.RunCommand(p.ID, "cmd-1")
+	if err != nil {
+		t.Fatalf("failed to start process: %v", err)
+	}
+
+	m := New(a, &fakeBack{}, p)
+	m.mode = modeRunning
+	m.runCommand = p.RunCommands[0]
+	m.runProc = proc
+	m.runSnap = runner.Snapshot{State: runner.StateRunning}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model := got.(Model)
+
+	if model.mode != modeView {
+		t.Error("expected esc to return to modeView")
+	}
+	if model.runProc != nil {
+		t.Error("expected the run state to be cleared")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && proc.State() == runner.StateRunning {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if state := proc.State(); state != runner.StateStopped {
+		t.Errorf("expected esc to stop the still-running process, got state %s", state)
+	}
+}
+
+func TestSKeyStopsAStillRunningProcessWithoutLeaving(t *testing.T) {
+	a := newTestApp(t)
+	p := seedProjectWithCommand(t, a, "cmd-1", "sleep 5")
+	proc, err := a.RunCommand(p.ID, "cmd-1")
+	if err != nil {
+		t.Fatalf("failed to start process: %v", err)
+	}
+
+	m := New(a, &fakeBack{}, p)
+	m.mode = modeRunning
+	m.runCommand = p.RunCommands[0]
+	m.runProc = proc
+	m.runSnap = runner.Snapshot{State: runner.StateRunning}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	model := got.(Model)
+
+	if model.mode != modeRunning {
+		t.Error("expected s to keep watching the process rather than leaving")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && proc.State() == runner.StateRunning {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if state := proc.State(); state != runner.StateStopped {
+		t.Errorf("expected s to stop the process, got state %s", state)
+	}
+}
+
+func TestEscInRunningDoesNotErrorWhenAlreadyFinished(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m.mode = modeRunning
+	m.runProc = &runner.Process{}
+	m.runSnap = runner.Snapshot{State: runner.StateCompleted, ExitCode: 0}
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model := got.(Model)
+
+	if model.mode != modeView {
+		t.Error("expected esc to return to modeView even after the process already finished")
+	}
+	if cmd != nil {
+		t.Error("expected no command from leaving a finished run")
+	}
+}
+
+func TestRenderRunningPaneShowsErrorStartingAndFinishedStates(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m.mode = modeRunning
+	m.runCommand = project.Command{Name: "test"}
+
+	m.runErr = errors.New("boom")
+	if got := m.renderRunningPane(); !strings.Contains(got, "failed to start") || !strings.Contains(got, "boom") {
+		t.Errorf("expected a launch-error message, got %q", got)
+	}
+
+	m.runErr = nil
+	if got := m.renderRunningPane(); !strings.Contains(got, "Starting") {
+		t.Errorf("expected a starting placeholder before any poll result, got %q", got)
+	}
+
+	m.runProc = &runner.Process{}
+	m.viewport = viewport.New(40, 5)
+
+	m.runSnap = runner.Snapshot{State: runner.StateRunning, Stdout: "hello\n"}
+	m.viewport.SetContent(buildRunOutput(m.runSnap)) // renderRunningPane only reads m.viewport; populating it is handleProcessPolled's job in real use
+	if got := m.renderRunningPane(); !strings.Contains(got, "hello") || !strings.Contains(got, "stop & leave") {
+		t.Errorf("expected streamed output and running hints, got %q", got)
+	}
+
+	m.runSnap = runner.Snapshot{State: runner.StateCompleted, ExitCode: 0}
+	if got := m.renderRunningPane(); !strings.Contains(got, "Exit code 0") || !strings.Contains(got, "completed") {
+		t.Errorf("expected a completed exit-status line, got %q", got)
+	}
+
+	m.runSnap = runner.Snapshot{State: runner.StateFailed, ExitCode: 1}
+	if got := m.renderRunningPane(); !strings.Contains(got, "Exit code 1") || !strings.Contains(got, "failed") {
+		t.Errorf("expected a failed exit-status line, got %q", got)
+	}
+
+	m.runSnap = runner.Snapshot{State: runner.StateStopped}
+	if got := m.renderRunningPane(); !strings.Contains(got, "Stopped") {
+		t.Errorf("expected a stopped status line, got %q", got)
 	}
 }

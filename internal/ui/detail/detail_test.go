@@ -1,14 +1,41 @@
 package detail
 
 import (
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	appPkg "github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/config"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/docker"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/git"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/shellexec"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 )
+
+// newTestApp builds a real App backed by a disposable temp registry,
+// the same pattern internal/ui/dashboard's tests use, so the parts of
+// this screen that go through App are tested against real App behavior
+// rather than a mock of it.
+func newTestApp(t *testing.T) *appPkg.App {
+	t.Helper()
+
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Storage: config.StorageConfig{Path: filepath.Join(dir, "projects.json")},
+		Runner:  config.RunnerConfig{Shell: "sh"},
+	}
+
+	a, err := appPkg.NewApp(cfg, shellexec.NewFakeExecutor())
+	if err != nil {
+		t.Fatalf("failed to construct App: %v", err)
+	}
+	return a
+}
 
 // fakeBack is a minimal screen.Screen test double standing in for "the
 // screen to return to," so tests can confirm esc hands off to it (and
@@ -21,11 +48,64 @@ func (f *fakeBack) Init() tea.Cmd                           { f.initCalled = tru
 func (f *fakeBack) Update(tea.Msg) (screen.Screen, tea.Cmd) { return f, nil }
 func (f *fakeBack) View() string                            { return "back" }
 
-func TestInitReturnsNilCommand(t *testing.T) {
-	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+func TestInitReturnsLoadContextCommand(t *testing.T) {
+	m := New(newTestApp(t), &fakeBack{}, project.Project{Name: "alpha"})
 
-	if cmd := m.Init(); cmd != nil {
-		t.Errorf("expected nil Cmd (nothing to load yet), got %v", cmd)
+	if cmd := m.Init(); cmd == nil {
+		t.Error("expected Init to return the context-loading command")
+	}
+}
+
+func TestInitCommandReportsProjectContext(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	m := New(a, &fakeBack{}, *p)
+	cmd := m.Init()
+
+	msg, ok := cmd().(contextLoadedMsg)
+	if !ok {
+		t.Fatalf("expected contextLoadedMsg, got %T", cmd())
+	}
+	if msg.err != nil {
+		t.Fatalf("did not expect an error, got %v", msg.err)
+	}
+	if msg.ctx.Project.ID != p.ID {
+		t.Errorf("expected the context's project to match, got ID %q", msg.ctx.Project.ID)
+	}
+}
+
+func TestUpdateStoresLoadedContext(t *testing.T) {
+	m := New(newTestApp(t), &fakeBack{}, project.Project{Name: "alpha"})
+
+	got, cmd := m.Update(contextLoadedMsg{ctx: appPkg.ProjectContext{Project: project.Project{Name: "alpha"}}})
+
+	model, ok := got.(Model)
+	if !ok {
+		t.Fatalf("expected Update to return Model, got %T", got)
+	}
+	if model.ctx == nil {
+		t.Fatal("expected ctx to be stored")
+	}
+	if cmd != nil {
+		t.Error("expected no follow-up command")
+	}
+}
+
+func TestUpdateStoresContextLoadError(t *testing.T) {
+	m := New(newTestApp(t), &fakeBack{}, project.Project{Name: "alpha"})
+
+	got, _ := m.Update(contextLoadedMsg{err: errors.New("boom")})
+
+	model := got.(Model)
+	if model.ctxErr == nil {
+		t.Fatal("expected ctxErr to be stored")
+	}
+	if model.ctx != nil {
+		t.Error("expected ctx to remain nil after a load error")
 	}
 }
 
@@ -123,5 +203,97 @@ func TestViewShowsFavoriteStatus(t *testing.T) {
 	notFavorited := New(nil, &fakeBack{}, project.Project{Name: "alpha", IsFavorite: false})
 	if !strings.Contains(notFavorited.View(), "Not favorited") {
 		t.Error("expected a non-favorited project to say so")
+	}
+}
+
+func TestViewShowsLoadingBeforeContextArrives(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+
+	if !strings.Contains(m.View(), "Loading") {
+		t.Error("expected a loading notice before contextLoadedMsg arrives")
+	}
+}
+
+func TestViewShowsContextLoadError(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m.ctxErr = errors.New("boom")
+
+	if !strings.Contains(m.View(), "failed to load project context") {
+		t.Error("expected the load error to be shown")
+	}
+}
+
+func TestViewShowsGitAndDockerSectionsOnceLoaded(t *testing.T) {
+	p := project.Project{Name: "alpha", HasDocker: true}
+	m := New(nil, &fakeBack{}, p)
+	m.ctx = &appPkg.ProjectContext{
+		Project:    p,
+		GitStatus:  &git.Status{Branch: "main", Clean: true},
+		Containers: []docker.Container{{Name: "alpha-web", Status: "Up 2 hours", State: "running"}},
+		Images:     []docker.Image{{Repository: "alpha-web", Tag: "latest", Size: "245MB"}},
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "Git") || !strings.Contains(view, "main") || !strings.Contains(view, "Clean") {
+		t.Errorf("expected the Git section to render branch and clean status, got %q", view)
+	}
+	if !strings.Contains(view, "Docker") || !strings.Contains(view, "alpha-web") || !strings.Contains(view, "245MB") {
+		t.Errorf("expected the Docker section to render container and image info, got %q", view)
+	}
+}
+
+func TestViewOmitsDockerSectionWhenNotConfigured(t *testing.T) {
+	p := project.Project{Name: "alpha", HasDocker: false}
+	m := New(nil, &fakeBack{}, p)
+	m.ctx = &appPkg.ProjectContext{Project: p, GitStatus: &git.Status{Branch: "main", Clean: true}}
+
+	if strings.Contains(m.View(), "Docker") {
+		t.Error("expected no Docker section when the project has no Docker setup")
+	}
+}
+
+func TestRenderGitSectionNotARepo(t *testing.T) {
+	got := renderGitSection(appPkg.ProjectContext{})
+
+	if !strings.Contains(got, "Not a Git repository") {
+		t.Errorf("expected a not-a-repo message, got %q", got)
+	}
+}
+
+func TestRenderGitSectionDetachedHead(t *testing.T) {
+	got := renderGitSection(appPkg.ProjectContext{GitStatus: &git.Status{Detached: true, Clean: true}})
+
+	if !strings.Contains(got, "detached HEAD") {
+		t.Errorf("expected a detached-HEAD label, got %q", got)
+	}
+}
+
+func TestRenderGitSectionDirtyShowsCounts(t *testing.T) {
+	got := renderGitSection(appPkg.ProjectContext{
+		GitStatus: &git.Status{Branch: "main", Staged: 1, Unstaged: 2, Untracked: 3},
+	})
+
+	if !strings.Contains(got, "Dirty") || !strings.Contains(got, "1 staged") || !strings.Contains(got, "2 unstaged") || !strings.Contains(got, "3 untracked") {
+		t.Errorf("expected dirty status with counts, got %q", got)
+	}
+}
+
+func TestRenderGitSectionShowsAheadBehindOnlyWhenNonzero(t *testing.T) {
+	clean := renderGitSection(appPkg.ProjectContext{GitStatus: &git.Status{Branch: "main", Clean: true}})
+	if strings.Contains(clean, "Ahead") {
+		t.Errorf("expected no ahead/behind line when both are zero, got %q", clean)
+	}
+
+	ahead := renderGitSection(appPkg.ProjectContext{GitStatus: &git.Status{Branch: "main", Clean: true, Ahead: 2, Behind: 1}})
+	if !strings.Contains(ahead, "Ahead 2, behind 1") {
+		t.Errorf("expected an ahead/behind line, got %q", ahead)
+	}
+}
+
+func TestRenderDockerSectionShowsPlaceholdersWhenEmpty(t *testing.T) {
+	got := renderDockerSection(appPkg.ProjectContext{})
+
+	if !strings.Contains(got, "No containers found") || !strings.Contains(got, "No images found") {
+		t.Errorf("expected empty-state placeholders, got %q", got)
 	}
 }

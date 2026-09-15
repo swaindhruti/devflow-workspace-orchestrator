@@ -175,8 +175,8 @@ func TestEnterKeyOpensDetailScreen(t *testing.T) {
 	if _, ok := got.(detail.Model); !ok {
 		t.Fatalf("expected enter to open detail.Model, got %T", got)
 	}
-	if cmd != nil {
-		t.Error("expected detail.Model's Init (nil for now) to propagate as the command")
+	if cmd == nil {
+		t.Error("expected detail.Model's Init (loading its Git/Docker context) to propagate as the command")
 	}
 }
 

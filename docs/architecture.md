@@ -133,7 +133,14 @@ These are used by domain packages but hold no domain rules of their own.
   one screen (they differ only in how they start and how they save) and
   is built on `charmbracelet/bubbles` (`filepicker`, `textinput`) rather
   than hand-rolled widgets, since a directory browser and text input are
-  exactly what that library already provides.
+  exactly what that library already provides. `internal/ui/detail` is
+  the per-project view: it fetches `app.ProjectContext` asynchronously
+  (a `tea.Cmd`, so the screen doesn't block while it shells out to git
+  and, if configured, docker) for its Git/Docker sections, while its
+  saved-commands section (list, add, delete — reusing `bubbles/textinput`
+  for the add form) works directly off the already-in-memory
+  `project.Project`, needing no fetch of its own. Running a saved
+  command with streamed output is not part of this screen yet.
 
 ## Recommended Repository Layout
 
@@ -160,6 +167,7 @@ internal/
         splash/
         dashboard/
         projectform/
+        detail/
 
 assets/
 scripts/

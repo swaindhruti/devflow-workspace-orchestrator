@@ -16,6 +16,21 @@ import (
 	"time"
 )
 
+// Snapshot is a consistent, point-in-time copy of a Process's mutable
+// state, taken under a single lock so State, Stdout, Stderr, ExitCode, and
+// FinishedAt never appear inconsistent relative to one another (e.g. State
+// already StateCompleted but Stdout missing output written just before
+// exit). Callers that need to observe a running Process — a UI polling
+// loop, in particular — should always go through Process.Snapshot rather
+// than reading multiple fields separately.
+type Snapshot struct {
+	State      State
+	Stdout     string
+	Stderr     string
+	ExitCode   int
+	FinishedAt time.Time
+}
+
 // State represents where a Process is in its lifecycle.
 type State int
 
@@ -50,6 +65,15 @@ func (s State) String() string {
 
 // Process represents a single shell command that has been started by a
 // Runner, along with its captured output and current lifecycle state.
+//
+// ID, Command, WorkDir, PID, and StartedAt are set once, before the
+// Process is ever handed to another goroutine, so they're safe to read
+// directly with no lock. Everything that can change while the process
+// runs — state, captured output, exit info — is guarded by mu and must be
+// read through State or Snapshot instead of accessed as a field: a
+// background goroutine (started in Start) writes to it for as long as the
+// process is alive, so an unguarded read of those fields while
+// State() == StateRunning is a data race.
 type Process struct {
 	// ID uniquely identifies this process within the Runner that started
 	// it.
@@ -59,34 +83,79 @@ type Process struct {
 	// WorkDir is the working directory the command was run from, or ""
 	// if it ran in the Runner's own working directory.
 	WorkDir string
-	// State is the process's current lifecycle state. It starts at
-	// StateRunning and transitions exactly once, when the process exits,
-	// to StateCompleted, StateFailed, or StateStopped.
-	State State
 	// PID is the operating-system process ID assigned once the command
 	// has started.
 	PID int
+	// StartedAt is the time the process was started.
+	StartedAt time.Time
+
 	// cmd is the underlying exec.Cmd, kept so Stop can signal the
 	// running process.
 	cmd *exec.Cmd
-	// Stdout accumulates everything the process has written to standard
+
+	// mu guards every field below, all of which can be mutated for as
+	// long as the process is running.
+	mu sync.Mutex
+	// state is the process's current lifecycle state. It starts at
+	// StateRunning and transitions exactly once, when the process exits,
+	// to StateCompleted, StateFailed, or StateStopped.
+	state State
+	// stdout accumulates everything the process has written to standard
 	// output since it started.
-	Stdout bytes.Buffer
-	// Stderr accumulates everything the process has written to standard
+	stdout bytes.Buffer
+	// stderr accumulates everything the process has written to standard
 	// error since it started.
-	Stderr bytes.Buffer
-	// StartedAt is the time the process was started.
-	StartedAt time.Time
-	// FinishedAt is the time the process exited. It is the zero Time
-	// while State is StateRunning.
-	FinishedAt time.Time
-	// ExitCode is the process's OS exit code once it has finished. It is
-	// meaningless while State is StateRunning.
-	ExitCode int
+	stderr bytes.Buffer
+	// finishedAt is the time the process exited. It is the zero Time
+	// while state is StateRunning.
+	finishedAt time.Time
+	// exitCode is the process's OS exit code once it has finished. It is
+	// meaningless while state is StateRunning.
+	exitCode int
 	// stopped records whether Stop was called for this process, so the
 	// exit-handling goroutine can distinguish "killed by us" from other
-	// abnormal exits when computing the final State.
+	// abnormal exits when computing the final state.
 	stopped bool
+}
+
+// State returns the process's current lifecycle state. Safe to call at
+// any time, including while the process is still running.
+func (p *Process) State() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.state
+}
+
+// Snapshot returns a consistent, point-in-time copy of the process's
+// state and captured output so far. Safe to call at any time, including
+// repeatedly from a polling loop while the process is still running —
+// this is the intended way for a caller (e.g. a UI) to observe a
+// Process's progress.
+func (p *Process) Snapshot() Snapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return Snapshot{
+		State:      p.state,
+		Stdout:     p.stdout.String(),
+		Stderr:     p.stderr.String(),
+		ExitCode:   p.exitCode,
+		FinishedAt: p.finishedAt,
+	}
+}
+
+// processWriter adapts a Process's mu-guarded output buffer to io.Writer,
+// so exec.Cmd's own stdout/stderr copying goroutines write through the
+// same lock Snapshot reads through, rather than writing directly into a
+// bytes.Buffer with no synchronization at all.
+type processWriter struct {
+	mu  *sync.Mutex
+	buf *bytes.Buffer
+}
+
+func (w processWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
 }
 
 // Config holds the settings a Runner uses to execute every command it
@@ -158,13 +227,13 @@ func (r *Runner) Start(command, workDir string) (*Process, error) {
 		ID:        generateID(),
 		Command:   command,
 		WorkDir:   workDir,
-		State:     StateRunning,
+		state:     StateRunning,
 		cmd:       cmd,
 		StartedAt: time.Now(),
 	}
 
-	cmd.Stdout = &proc.Stdout
-	cmd.Stderr = &proc.Stderr
+	cmd.Stdout = processWriter{mu: &proc.mu, buf: &proc.stdout}
+	cmd.Stderr = processWriter{mu: &proc.mu, buf: &proc.stderr}
 
 	err := cmd.Start()
 	if err != nil {
@@ -179,22 +248,23 @@ func (r *Runner) Start(command, workDir string) (*Process, error) {
 
 	go func() {
 		err := cmd.Wait()
-		r.mu.Lock()
-		defer r.mu.Unlock()
 
-		proc.FinishedAt = time.Now()
+		proc.mu.Lock()
+		defer proc.mu.Unlock()
+
+		proc.finishedAt = time.Now()
 		if err != nil {
 			if proc.stopped {
-				proc.State = StateStopped
+				proc.state = StateStopped
 			} else if exitErr, ok := err.(*exec.ExitError); ok {
-				proc.ExitCode = exitErr.ExitCode()
-				proc.State = StateFailed
+				proc.exitCode = exitErr.ExitCode()
+				proc.state = StateFailed
 			} else {
-				proc.State = StateStopped
+				proc.state = StateStopped
 			}
 		} else {
-			proc.ExitCode = 0
-			proc.State = StateCompleted
+			proc.exitCode = 0
+			proc.state = StateCompleted
 		}
 	}()
 
@@ -219,11 +289,14 @@ func (r *Runner) Stop(id string) error {
 		return fmt.Errorf("process not found: %s", id)
 	}
 
-	if proc.State != StateRunning {
+	proc.mu.Lock()
+	if proc.state != StateRunning {
+		proc.mu.Unlock()
 		return fmt.Errorf("process %s is not running", id)
 	}
-
 	proc.stopped = true
+	proc.mu.Unlock()
+
 	return proc.cmd.Process.Kill()
 }
 

@@ -18,29 +18,26 @@ func TestStartEcho(t *testing.T) {
 		t.Fatal("expected process ID to be generated")
 	}
 
-	if proc.State != StateRunning {
-		t.Fatalf("expected running state, got %s", proc.State)
+	if proc.State() != StateRunning {
+		t.Fatalf("expected running state, got %s", proc.State())
 	}
 
 	// Wait for completion
 	time.Sleep(100 * time.Millisecond)
 
-	r.mu.Lock()
-	state := proc.State
-	output := proc.Stdout.String()
-	r.mu.Unlock()
+	snap := proc.Snapshot()
 
-	if state != StateCompleted {
-		t.Fatalf("expected completed state, got %s", state)
+	if snap.State != StateCompleted {
+		t.Fatalf("expected completed state, got %s", snap.State)
 	}
 
-	output = strings.TrimSpace(output)
+	output := strings.TrimSpace(snap.Stdout)
 	if output != "hello world" {
 		t.Fatalf("expected 'hello world', got '%s'", output)
 	}
 
-	if proc.ExitCode != 0 {
-		t.Fatalf("expected exit code 0, got %d", proc.ExitCode)
+	if snap.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", snap.ExitCode)
 	}
 }
 
@@ -54,13 +51,11 @@ func TestStartWithWorkDir(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	r.mu.Lock()
-	output := strings.TrimSpace(proc.Stdout.String())
-	state := proc.State
-	r.mu.Unlock()
+	snap := proc.Snapshot()
+	output := strings.TrimSpace(snap.Stdout)
 
-	if state != StateCompleted {
-		t.Fatalf("expected completed state, got %s", state)
+	if snap.State != StateCompleted {
+		t.Fatalf("expected completed state, got %s", snap.State)
 	}
 
 	if output != "/tmp" {
@@ -86,8 +81,8 @@ func TestStartInvalidCommand(t *testing.T) {
 	}
 
 	proc := processes[0]
-	if proc.State != StateFailed {
-		t.Fatalf("expected failed state, got %s", proc.State)
+	if proc.State() != StateFailed {
+		t.Fatalf("expected failed state, got %s", proc.State())
 	}
 }
 
@@ -99,8 +94,8 @@ func TestStopProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if proc.State != StateRunning {
-		t.Fatalf("expected running state, got %s", proc.State)
+	if proc.State() != StateRunning {
+		t.Fatalf("expected running state, got %s", proc.State())
 	}
 
 	err = r.Stop(proc.ID)
@@ -110,11 +105,7 @@ func TestStopProcess(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	r.mu.Lock()
-	state := proc.State
-	r.mu.Unlock()
-
-	if state != StateStopped {
+	if state := proc.State(); state != StateStopped {
 		t.Fatalf("expected stopped state, got %s", state)
 	}
 }
@@ -176,6 +167,45 @@ func TestGetNonExistentProcess(t *testing.T) {
 	_, err := r.Get("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for non-existent process")
+	}
+}
+
+// TestSnapshotIsRaceFreeWhileRunning drives Process.Snapshot from a tight
+// concurrent loop while a process is still emitting output, so `go test
+// -race` catches any unsynchronized access between the exec.Cmd output
+// copiers / exit-watcher goroutine (both writers) and Snapshot (the
+// reader) — this is exactly the access pattern a UI polling loop uses.
+func TestSnapshotIsRaceFreeWhileRunning(t *testing.T) {
+	r := New(Config{})
+
+	proc, err := r.Start("echo a; sleep 0.02; echo b; sleep 0.02; echo c", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			snap := proc.Snapshot()
+			if snap.State != StateRunning {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for process to finish")
+	}
+
+	snap := proc.Snapshot()
+	if snap.State != StateCompleted {
+		t.Fatalf("expected completed state, got %s", snap.State)
+	}
+	if got := strings.TrimSpace(snap.Stdout); got != "a\nb\nc" {
+		t.Fatalf("expected 'a\\nb\\nc', got %q", got)
 	}
 }
 

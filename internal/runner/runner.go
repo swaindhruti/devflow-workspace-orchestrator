@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -234,6 +235,7 @@ func (r *Runner) Start(command, workDir string) (*Process, error) {
 
 	cmd.Stdout = processWriter{mu: &proc.mu, buf: &proc.stdout}
 	cmd.Stderr = processWriter{mu: &proc.mu, buf: &proc.stderr}
+	setProcessGroup(cmd)
 
 	err := cmd.Start()
 	if err != nil {
@@ -271,7 +273,17 @@ func (r *Runner) Start(command, workDir string) (*Process, error) {
 	return proc, nil
 }
 
-// Stop forcibly kills a running process.
+// Stop forcibly kills a running process — on Unix, its entire process
+// group (see setProcessGroup/stopProcessGroup), not just the top-level
+// shell Start invoked. Killing only that shell (what a plain
+// cmd.Process.Kill() does) can leave its children running: a command
+// like "npm run dev" or a docker-compose invocation commonly has the
+// shell fork additional processes rather than exec'ing directly into
+// one, and a killed parent doesn't take orphaned children down with it
+// — worse, if a surviving child still holds the shell's inherited
+// stdout/stderr pipe open, cmd.Wait() in Start's exit-watcher goroutine
+// never even returns, since Cmd.Wait also waits for those pipes to see
+// EOF, leaving State stuck at StateRunning indefinitely.
 //
 // Parameters:
 //   - id: the Process.ID to stop, as returned by Start.
@@ -297,7 +309,7 @@ func (r *Runner) Stop(id string) error {
 	proc.stopped = true
 	proc.mu.Unlock()
 
-	return proc.cmd.Process.Kill()
+	return stopProcessGroup(proc.PID, syscall.SIGKILL)
 }
 
 // Get returns the tracked Process matching id.

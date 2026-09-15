@@ -15,8 +15,17 @@ import (
 )
 
 // Primary is DevFlow's accent color, used for active selections, titles,
-// and anything that should draw the eye first.
-var Primary = lipgloss.AdaptiveColor{Light: "#0057B8", Dark: "#4FC3F7"}
+// and anything that should draw the eye first. It's the same violet
+// family as the splash screen's banner gradient (internal/ui/splash),
+// so the rest of the app reads as a continuation of that first
+// impression rather than switching palettes once the splash hands off.
+var Primary = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#A78BFA"}
+
+// Accent is DevFlow's secondary brand color — the warm yellow half of
+// the splash's violet-to-yellow gradient — used sparingly for
+// highlights that should stand out from Primary itself (e.g. a
+// favorite marker, a call-to-action), not as a replacement for it.
+var Accent = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#FACC15"}
 
 // Muted is used for secondary text: descriptions, hints, and anything
 // that should visually recede behind Primary content.

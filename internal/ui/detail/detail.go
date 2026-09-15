@@ -1,10 +1,10 @@
 // Package detail implements DevFlow's project detail screen: a
 // single-project view opened from the dashboard, showing everything
-// about one registered project in one place — its static fields, live
-// Git status, and Docker containers/images (via app.ProjectContext).
-// Saved-command management (listing, adding, removing, running one) is
-// added in a later change, once this screen's data display is in
-// place.
+// about one registered project in one place — its static fields, saved
+// commands, and live Git status and Docker containers/images (via
+// app.ProjectContext). Adding, removing, and running a command is
+// added in a later change, once this screen can show the commands that
+// already exist.
 package detail
 
 import (
@@ -132,7 +132,7 @@ func (m Model) View() string {
 	if p.IsFavorite {
 		favorite = lipgloss.NewStyle().Foreground(theme.Accent).Render("★ Favorited")
 	}
-	lines = append(lines, "", favorite)
+	lines = append(lines, "", favorite, "", renderCommandsSection(p.RunCommands))
 
 	switch {
 	case m.ctxErr != nil:
@@ -150,6 +150,25 @@ func (m Model) View() string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	return m.centered(theme.Panel(content, m.width))
+}
+
+// renderCommandsSection formats a project's saved commands as a
+// labeled section: a "Commands" heading, then one line per command
+// (its name, then its shell command text in a muted tone) — or a
+// placeholder line if there are none yet. This is read-only for now;
+// adding, removing, and running a command are added in a later change.
+func renderCommandsSection(commands []project.Command) string {
+	heading := theme.TitleStyle.Render("Commands")
+
+	if len(commands) == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left, heading, theme.SubtleStyle.Render("No saved commands."))
+	}
+
+	rows := []string{heading}
+	for _, c := range commands {
+		rows = append(rows, fmt.Sprintf("%s: %s", c.Name, theme.SubtleStyle.Render(c.Command)))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // renderGitSection formats ctx.GitStatus as a labeled section: a

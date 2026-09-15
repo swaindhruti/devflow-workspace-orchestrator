@@ -297,3 +297,37 @@ func TestRenderDockerSectionShowsPlaceholdersWhenEmpty(t *testing.T) {
 		t.Errorf("expected empty-state placeholders, got %q", got)
 	}
 }
+
+func TestRenderCommandsSectionShowsPlaceholderWhenEmpty(t *testing.T) {
+	got := renderCommandsSection(nil)
+
+	if !strings.Contains(got, "Commands") || !strings.Contains(got, "No saved commands") {
+		t.Errorf("expected a Commands heading and empty-state placeholder, got %q", got)
+	}
+}
+
+func TestRenderCommandsSectionListsEachCommand(t *testing.T) {
+	got := renderCommandsSection([]project.Command{
+		{Name: "test", Command: "go test ./..."},
+		{Name: "dev", Command: "npm run dev"},
+	})
+
+	for _, want := range []string{"test", "go test ./...", "dev", "npm run dev"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected commands section to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestViewShowsCommandsSection(t *testing.T) {
+	p := project.Project{
+		Name:        "alpha",
+		RunCommands: []project.Command{{Name: "test", Command: "go test ./..."}},
+	}
+	m := New(nil, &fakeBack{}, p)
+
+	view := m.View()
+	if !strings.Contains(view, "Commands") || !strings.Contains(view, "go test ./...") {
+		t.Errorf("expected the view to include the commands section, got %q", view)
+	}
+}

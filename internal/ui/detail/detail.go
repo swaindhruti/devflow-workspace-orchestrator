@@ -2,8 +2,18 @@
 // single-project view opened from the dashboard, showing everything
 // about one registered project in one place — its static fields, saved
 // commands (with add/remove), and live Git status and Docker
-// containers/images (via app.ProjectContext). Running a saved command
-// with streamed output is added in a later change.
+// containers/images (via app.ProjectContext). The screen is laid out as
+// a sidebar of sections (Overview, Commands, Git, Docker) next to a
+// content pane showing only the active one, rather than stacking every
+// section in one long scroll: a single vertical stack of all sections
+// could easily exceed a modest terminal's height (Bubble Tea's
+// alt-screen buffer doesn't scroll), silently pushing the later
+// sections — Docker in particular, since it renders last — off the
+// bottom. Showing one short section at a time keeps the whole screen
+// within the terminal's actual size, and the sidebar doubles as an
+// always-visible index of what's available and how to get to it.
+// Running a saved command with streamed output is added in a later
+// change.
 package detail
 
 import (
@@ -34,6 +44,27 @@ const (
 	modeConfirmDeleteCommand
 )
 
+// section is which sidebar entry the content pane is currently showing.
+// It's the same kind of explicit, cycling state as mode: Update needs to
+// know unambiguously which pane a keypress like "a" or "d" applies to,
+// and the sidebar needs to know which entry to highlight.
+type section int
+
+const (
+	sectionOverview section = iota
+	sectionCommands
+	sectionGit
+	sectionDocker
+	sectionCount
+)
+
+var sectionLabels = [sectionCount]string{
+	sectionOverview: "Overview",
+	sectionCommands: "Commands",
+	sectionGit:      "Git",
+	sectionDocker:   "Docker",
+}
+
 // Field indexes into Model.cmdInputs, and into their form labels.
 const (
 	cmdFieldName = iota
@@ -61,6 +92,7 @@ type Model struct {
 	ctx    *app.ProjectContext
 	ctxErr error
 
+	section   section
 	mode      mode
 	cmdCursor int
 	status    string
@@ -72,7 +104,8 @@ type Model struct {
 	width, height int
 }
 
-// New constructs a detail screen for p.
+// New constructs a detail screen for p, starting on the Overview
+// section.
 //
 // Parameters:
 //   - a: the wired application layer ProjectContext is fetched through,
@@ -157,15 +190,34 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	}
 }
 
-// updateView handles a keypress in modeView: "esc" returns to m.back;
-// up/k and down/j move the selected command (cmdCursor); "a" opens the
-// add-command form; "d" enters delete confirmation for the selected
-// command, if there is one.
+// updateView handles a keypress in modeView. "esc" returns to m.back.
+// left/h and right/l (or tab/shift+tab) switch which sidebar section is
+// active, the same on every section. The remaining keys are specific to
+// the Commands section: up/k and down/j move the selected command
+// (cmdCursor), "a" opens the add-command form, and "d" enters delete
+// confirmation for the selected command, if there is one. Gating those
+// to sectionCommands keeps the footer's advertised hints (see
+// sectionKeyHints) always accurate — a key never does something the
+// visible hints for the current section didn't mention.
 func (m Model) updateView(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m.back, m.back.Init()
 
+	case "left", "h", "shift+tab":
+		m.section = (m.section - 1 + sectionCount) % sectionCount
+		return m, nil
+
+	case "right", "l", "tab":
+		m.section = (m.section + 1) % sectionCount
+		return m, nil
+	}
+
+	if m.section != sectionCommands {
+		return m, nil
+	}
+
+	switch msg.String() {
 	case "up", "k":
 		if m.cmdCursor > 0 {
 			m.cmdCursor--
@@ -319,17 +371,22 @@ func (m *Model) deleteSelectedCommand() {
 	m.status = fmt.Sprintf("deleted command %q", target.Name)
 }
 
-// keyHints builds this screen's keybinding legend. The
-// select/delete-command hints only appear when there's at least one
-// command to select or delete.
-func keyHints(hasCommands bool) string {
-	pairs := make([][2]string, 0, 4)
-	if hasCommands {
-		pairs = append(pairs, [2]string{"↑/k ↓/j", "select command"})
-	}
-	pairs = append(pairs, [2]string{"a", "add command"})
-	if hasCommands {
-		pairs = append(pairs, [2]string{"d", "delete command"})
+// sectionKeyHints builds the footer's keybinding legend for the given
+// section: the section-switch hint is always present, and the
+// select/add/delete-command hints appear only on sectionCommands (and
+// select/delete only when there's at least one command), so the footer
+// never advertises a key that updateView wouldn't currently honor.
+func sectionKeyHints(s section, hasCommands bool) string {
+	pairs := make([][2]string, 0, 5)
+	pairs = append(pairs, [2]string{"←/→", "switch section"})
+	if s == sectionCommands {
+		if hasCommands {
+			pairs = append(pairs, [2]string{"↑/k ↓/j", "select command"})
+		}
+		pairs = append(pairs, [2]string{"a", "add command"})
+		if hasCommands {
+			pairs = append(pairs, [2]string{"d", "delete command"})
+		}
 	}
 	pairs = append(pairs, [2]string{"esc", "back"})
 	return theme.KeyHints(pairs)
@@ -340,21 +397,144 @@ func keyHints(hasCommands bool) string {
 // confirmation styling.
 var confirmPromptStyle = lipgloss.NewStyle().Bold(true).Foreground(theme.Danger)
 
-// View renders the project's static fields as a single bordered,
-// centered panel (see theme.Panel) — name, path, description (if any),
-// tech stack (if any), and favorite status. In modeAddCommand, the
-// add-command form (renderAddCommandForm) replaces everything below
-// that, so the form is the sole focus. Otherwise it continues with the
-// Commands section (renderCommandsSection, with the selected command
-// highlighted), then the live Git and Docker sections
-// (renderGitSection/renderDockerSection): a loading notice until
-// contextLoadedMsg arrives, an error line if it failed outright, or the
-// sections themselves once ctx is populated. The footer is the
-// keybinding legend (keyHints), with a delete confirmation or a
-// transient status shown as an extra line above it when there's one to
-// show — the same "never hide the instructions" approach
-// internal/ui/dashboard's footer uses.
+// sideBoxStyle frames both the sidebar and the content pane in a
+// matching rounded border, so the two read as one cohesive
+// bento-style layout rather than two unrelated boxes. Like
+// theme.PanelStyle, it sets no Foreground/Background/Bold of its own so
+// it composes safely with the already-styled content each pane renders.
+var sideBoxStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(theme.Primary).
+	Padding(1, 2)
+
+// sizedBox renders content inside sideBoxStyle, capping the whole box
+// (border and padding included) to exactly width columns and height
+// rows whenever they're positive — the same reasoning as theme.Panel's
+// width handling (Style.Width/Height size the pre-border content area,
+// so the border's own size has to be subtracted first for the
+// *bordered* total to come out right), extended to height so the
+// sidebar and content pane always render as two equal-height boxes
+// instead of whichever is taller dictating the other's border.
+func sizedBox(content string, width, height int) string {
+	style := sideBoxStyle
+	if width > 0 {
+		if contentWidth := width - style.GetHorizontalBorderSize(); contentWidth > 0 {
+			style = style.Width(contentWidth)
+		}
+	}
+	if height > 0 {
+		if contentHeight := height - style.GetVerticalBorderSize(); contentHeight > 0 {
+			style = style.Height(contentHeight)
+		}
+	}
+	return style.Render(content)
+}
+
+// clampInt constrains v to [lo, hi].
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// View renders the screen as a sidebar (renderSidebar) next to a
+// content pane showing only the active section (renderSection), both
+// boxed to the same height via sizedBox so they read as one layout. In
+// modeAddCommand the content pane is the add-command form instead
+// (renderAddCommandForm, which carries its own complete keybinding
+// legend), and the outer footer is skipped entirely rather than showing
+// hints like "esc back" that would mean something different mid-form.
+// Otherwise the footer is sectionKeyHints for the active section, with
+// a delete confirmation or a transient status shown as an extra line
+// above it when there's one to show — the same "never hide the
+// instructions" approach internal/ui/dashboard's footer uses.
 func (m Model) View() string {
+	sidebar := m.renderSidebar()
+	content := m.renderSection()
+
+	var sidebarWidth, contentWidth int
+	if m.width > 0 {
+		sidebarWidth = clampInt(m.width/4, 16, 24)
+		contentWidth = m.width - sidebarWidth - 1
+		if contentWidth < 28 {
+			contentWidth = 28
+		}
+	}
+	boxHeight := 0
+	if m.height > 0 {
+		boxHeight = m.height - 4
+		if boxHeight < 8 {
+			boxHeight = 8
+		}
+	}
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top,
+		sizedBox(sidebar, sidebarWidth, boxHeight),
+		" ",
+		sizedBox(content, contentWidth, boxHeight),
+	)
+
+	if m.mode == modeAddCommand {
+		return m.centered(body)
+	}
+
+	full := lipgloss.JoinVertical(lipgloss.Left, body, "", m.renderFooter())
+	return m.centered(full)
+}
+
+// renderSidebar lists every section, marking the active one with a "›"
+// prefix in theme.TitleStyle and the rest in theme.SubtleStyle — the
+// always-visible index of what this screen shows and how to reach it.
+// The Commands entry additionally shows how many are saved.
+func (m Model) renderSidebar() string {
+	items := make([]string, 0, sectionCount*2-1)
+	for s := section(0); s < sectionCount; s++ {
+		label := sectionLabels[s]
+		if s == sectionCommands && len(m.project.RunCommands) > 0 {
+			label = fmt.Sprintf("%s (%d)", label, len(m.project.RunCommands))
+		}
+
+		if s == m.section {
+			items = append(items, theme.TitleStyle.Render("› "+label))
+		} else {
+			items = append(items, theme.SubtleStyle.Render("  "+label))
+		}
+		if s != sectionCount-1 {
+			items = append(items, "")
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, items...)
+}
+
+// renderSection renders the content pane for whichever section is
+// active. Commands shows the add-command form in place of the commands
+// list while modeAddCommand is active, since "a" can only be pressed
+// from sectionCommands in the first place (see updateView), so the two
+// are always in sync.
+func (m Model) renderSection() string {
+	switch m.section {
+	case sectionCommands:
+		if m.mode == modeAddCommand {
+			return m.renderAddCommandForm()
+		}
+		return m.renderCommandsPane()
+	case sectionGit:
+		return m.renderGitPane()
+	case sectionDocker:
+		return m.renderDockerPane()
+	default:
+		return m.renderOverviewPane()
+	}
+}
+
+// renderOverviewPane shows the project's static fields — name, path,
+// description (if any), tech stack (if any), and favorite status — plus
+// a hint on how to reach the other sections.
+func (m Model) renderOverviewPane() string {
 	p := m.project
 
 	lines := []string{
@@ -374,39 +554,91 @@ func (m Model) View() string {
 	if p.IsFavorite {
 		favorite = lipgloss.NewStyle().Foreground(theme.Accent).Render("★ Favorited")
 	}
-	lines = append(lines, "", favorite)
+	lines = append(lines, "", favorite, "",
+		theme.HelpStyle.Render("←/→ (h/l, tab) to browse Commands, Git, and Docker."))
 
-	if m.mode == modeAddCommand {
-		lines = append(lines, "", m.renderAddCommandForm())
-		return m.centered(theme.Panel(lipgloss.JoinVertical(lipgloss.Left, lines...), m.width))
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// renderCommandsPane shows the project's saved commands
+// (renderCommandsSection, with the selected one highlighted) plus a
+// hint on how to select, add, or delete one.
+func (m Model) renderCommandsPane() string {
+	p := m.project
+	section := renderCommandsSection(p.RunCommands, m.cmdCursor)
+
+	help := theme.HelpStyle.Render("Press a to save your first command, e.g. go test ./...")
+	if len(p.RunCommands) > 0 {
+		help = theme.HelpStyle.Render("↑/k ↓/j select   a add another   d delete selected")
 	}
 
-	lines = append(lines, "", renderCommandsSection(p.RunCommands, m.cmdCursor))
+	return lipgloss.JoinVertical(lipgloss.Left, section, "", help)
+}
+
+// renderGitPane shows the project's live Git status
+// (renderGitSection), or a loading/error notice while ctx hasn't
+// arrived yet.
+func (m Model) renderGitPane() string {
+	switch {
+	case m.ctxErr != nil:
+		return lipgloss.JoinVertical(lipgloss.Left,
+			theme.TitleStyle.Render("Git"), "",
+			lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("failed to load project context: %v", m.ctxErr)))
+	case m.ctx == nil:
+		return lipgloss.JoinVertical(lipgloss.Left,
+			theme.TitleStyle.Render("Git"), "",
+			theme.SubtleStyle.Render("Loading Git status…"))
+	default:
+		return lipgloss.JoinVertical(lipgloss.Left,
+			renderGitSection(*m.ctx), "",
+			theme.HelpStyle.Render("Read-only — reflects the working tree on disk."))
+	}
+}
+
+// renderDockerPane shows the project's Docker containers/images
+// (renderDockerSection) if the project has Docker configured, a
+// loading/error notice while ctx hasn't arrived yet, or — if the
+// project has no Docker configuration at all — an explanatory message
+// instead of an empty-looking pane.
+func (m Model) renderDockerPane() string {
+	if !m.project.HasDocker {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			theme.TitleStyle.Render("Docker"), "",
+			theme.SubtleStyle.Render("This project has no Docker configuration."),
+			theme.HelpStyle.Render("Docker support is detected automatically when a project is registered (a Dockerfile or compose file present in its directory)."))
+	}
 
 	switch {
 	case m.ctxErr != nil:
-		lines = append(lines, "", lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("failed to load project context: %v", m.ctxErr)))
+		return lipgloss.JoinVertical(lipgloss.Left,
+			theme.TitleStyle.Render("Docker"), "",
+			lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("failed to load project context: %v", m.ctxErr)))
 	case m.ctx == nil:
-		lines = append(lines, "", theme.SubtleStyle.Render("Loading Git and Docker status…"))
+		return lipgloss.JoinVertical(lipgloss.Left,
+			theme.TitleStyle.Render("Docker"), "",
+			theme.SubtleStyle.Render("Loading Docker status…"))
 	default:
-		lines = append(lines, "", renderGitSection(*m.ctx))
-		if p.HasDocker {
-			lines = append(lines, "", renderDockerSection(*m.ctx))
-		}
+		return lipgloss.JoinVertical(lipgloss.Left,
+			renderDockerSection(*m.ctx), "",
+			theme.HelpStyle.Render("Read-only — scoped to this project's Docker identifier."))
 	}
+}
 
-	footer := keyHints(len(p.RunCommands) > 0)
+// renderFooter builds the screen's bottom line(s): sectionKeyHints for
+// the active section, with a delete confirmation or a transient status
+// shown as an extra line above it when there's one to show.
+func (m Model) renderFooter() string {
+	hints := sectionKeyHints(m.section, len(m.project.RunCommands) > 0)
+
 	switch {
-	case m.mode == modeConfirmDeleteCommand && m.cmdCursor < len(p.RunCommands):
-		prompt := confirmPromptStyle.Render(fmt.Sprintf("Delete command %q? (y/n)", p.RunCommands[m.cmdCursor].Name))
-		footer = lipgloss.JoinVertical(lipgloss.Left, prompt, "", footer)
+	case m.mode == modeConfirmDeleteCommand && m.cmdCursor < len(m.project.RunCommands):
+		prompt := confirmPromptStyle.Render(fmt.Sprintf("Delete command %q? (y/n)", m.project.RunCommands[m.cmdCursor].Name))
+		return lipgloss.JoinVertical(lipgloss.Left, prompt, "", hints)
 	case m.status != "":
-		footer = lipgloss.JoinVertical(lipgloss.Left, theme.SubtleStyle.Render(m.status), "", footer)
+		return lipgloss.JoinVertical(lipgloss.Left, theme.SubtleStyle.Render(m.status), "", hints)
+	default:
+		return hints
 	}
-	lines = append(lines, "", footer)
-
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return m.centered(theme.Panel(content, m.width))
 }
 
 // renderAddCommandForm renders the add-command form: a heading, the

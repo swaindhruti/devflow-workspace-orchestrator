@@ -48,6 +48,18 @@ func (f *fakeBack) Init() tea.Cmd                           { f.initCalled = tru
 func (f *fakeBack) Update(tea.Msg) (screen.Screen, tea.Cmd) { return f, nil }
 func (f *fakeBack) View() string                            { return "back" }
 
+// switchSection sends one "right" keypress, advancing m.section by one
+// (with wraparound) the same way a user pressing → would.
+func switchSection(t *testing.T, m Model) Model {
+	t.Helper()
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	model, ok := got.(Model)
+	if !ok {
+		t.Fatalf("expected Update to return Model, got %T", got)
+	}
+	return model
+}
+
 func TestInitReturnsLoadContextCommand(t *testing.T) {
 	m := New(newTestApp(t), &fakeBack{}, project.Project{Name: "alpha"})
 
@@ -208,6 +220,8 @@ func TestViewShowsFavoriteStatus(t *testing.T) {
 
 func TestViewShowsLoadingBeforeContextArrives(t *testing.T) {
 	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m = switchSection(t, m) // Overview -> Commands
+	m = switchSection(t, m) // Commands -> Git
 
 	if !strings.Contains(m.View(), "Loading") {
 		t.Error("expected a loading notice before contextLoadedMsg arrives")
@@ -217,38 +231,62 @@ func TestViewShowsLoadingBeforeContextArrives(t *testing.T) {
 func TestViewShowsContextLoadError(t *testing.T) {
 	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
 	m.ctxErr = errors.New("boom")
+	m = switchSection(t, m) // Overview -> Commands
+	m = switchSection(t, m) // Commands -> Git
 
 	if !strings.Contains(m.View(), "failed to load project context") {
 		t.Error("expected the load error to be shown")
 	}
 }
 
-func TestViewShowsGitAndDockerSectionsOnceLoaded(t *testing.T) {
-	p := project.Project{Name: "alpha", HasDocker: true}
+func TestViewShowsGitSectionOnceLoaded(t *testing.T) {
+	p := project.Project{Name: "alpha"}
 	m := New(nil, &fakeBack{}, p)
 	m.ctx = &appPkg.ProjectContext{
-		Project:    p,
-		GitStatus:  &git.Status{Branch: "main", Clean: true},
-		Containers: []docker.Container{{Name: "alpha-web", Status: "Up 2 hours", State: "running"}},
-		Images:     []docker.Image{{Repository: "alpha-web", Tag: "latest", Size: "245MB"}},
+		Project:   p,
+		GitStatus: &git.Status{Branch: "main", Clean: true},
 	}
+	m = switchSection(t, m) // Overview -> Commands
+	m = switchSection(t, m) // Commands -> Git
 
 	view := m.View()
 	if !strings.Contains(view, "Git") || !strings.Contains(view, "main") || !strings.Contains(view, "Clean") {
 		t.Errorf("expected the Git section to render branch and clean status, got %q", view)
 	}
+}
+
+func TestViewShowsDockerSectionOnceLoaded(t *testing.T) {
+	p := project.Project{Name: "alpha", HasDocker: true}
+	m := New(nil, &fakeBack{}, p)
+	m.ctx = &appPkg.ProjectContext{
+		Project:    p,
+		Containers: []docker.Container{{Name: "alpha-web", Status: "Up 2 hours", State: "running"}},
+		Images:     []docker.Image{{Repository: "alpha-web", Tag: "latest", Size: "245MB"}},
+	}
+	m = switchSection(t, m) // Overview -> Commands
+	m = switchSection(t, m) // Commands -> Git
+	m = switchSection(t, m) // Git -> Docker
+
+	view := m.View()
 	if !strings.Contains(view, "Docker") || !strings.Contains(view, "alpha-web") || !strings.Contains(view, "245MB") {
 		t.Errorf("expected the Docker section to render container and image info, got %q", view)
 	}
 }
 
-func TestViewOmitsDockerSectionWhenNotConfigured(t *testing.T) {
+func TestDockerPaneShowsNotConfiguredMessage(t *testing.T) {
 	p := project.Project{Name: "alpha", HasDocker: false}
 	m := New(nil, &fakeBack{}, p)
 	m.ctx = &appPkg.ProjectContext{Project: p, GitStatus: &git.Status{Branch: "main", Clean: true}}
+	m = switchSection(t, m) // Overview -> Commands
+	m = switchSection(t, m) // Commands -> Git
+	m = switchSection(t, m) // Git -> Docker
 
-	if strings.Contains(m.View(), "Docker") {
-		t.Error("expected no Docker section when the project has no Docker setup")
+	view := m.View()
+	if !strings.Contains(view, "This project has no Docker") {
+		t.Errorf("expected an explanatory message when the project has no Docker setup, got %q", view)
+	}
+	if strings.Contains(view, "No containers found") {
+		t.Error("expected the container/image placeholders not to show when Docker isn't configured at all")
 	}
 }
 
@@ -342,10 +380,51 @@ func TestViewShowsCommandsSection(t *testing.T) {
 		RunCommands: []project.Command{{Name: "test", Command: "go test ./..."}},
 	}
 	m := New(nil, &fakeBack{}, p)
+	m = switchSection(t, m) // Overview -> Commands
 
 	view := m.View()
 	if !strings.Contains(view, "Commands") || !strings.Contains(view, "go test ./...") {
 		t.Errorf("expected the view to include the commands section, got %q", view)
+	}
+}
+
+func TestLeftRightKeysSwitchSection(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+
+	m = switchSection(t, m)
+	if m.section != sectionCommands {
+		t.Fatalf("expected one right press to land on sectionCommands, got %v", m.section)
+	}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	model := got.(Model)
+	if model.section != sectionOverview {
+		t.Errorf("expected left to move back to sectionOverview, got %v", model.section)
+	}
+
+	got, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	model = got.(Model)
+	if model.section != sectionDocker {
+		t.Errorf("expected 'h' from sectionOverview to wrap to sectionDocker, got %v", model.section)
+	}
+
+	got, _ = model.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	model = got.(Model)
+	if model.section != sectionGit {
+		t.Errorf("expected left again to move to sectionGit, got %v", model.section)
+	}
+}
+
+func TestSidebarHighlightsActiveSection(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+
+	if !strings.Contains(m.renderSidebar(), "› Overview") {
+		t.Errorf("expected Overview to be marked active by default, got %q", m.renderSidebar())
+	}
+
+	m = switchSection(t, m)
+	if !strings.Contains(m.renderSidebar(), "› Commands") {
+		t.Errorf("expected Commands to be marked active after switching, got %q", m.renderSidebar())
 	}
 }
 
@@ -354,6 +433,7 @@ func TestUpDownMoveCommandCursorWithBounds(t *testing.T) {
 		{Name: "a"}, {Name: "b"}, {Name: "c"},
 	}}
 	m := New(nil, &fakeBack{}, p)
+	m = switchSection(t, m) // Overview -> Commands
 
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	got, _ = got.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
@@ -377,6 +457,7 @@ func TestUpDownMoveCommandCursorWithBounds(t *testing.T) {
 
 func TestAKeyOpensAddCommandFormFocused(t *testing.T) {
 	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m = switchSection(t, m) // Overview -> Commands, where "a" is active
 
 	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	model := got.(Model)
@@ -397,6 +478,7 @@ func TestAKeyOpensAddCommandFormFocused(t *testing.T) {
 
 func TestEscCancelsAddCommandFormWithoutSaving(t *testing.T) {
 	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m = switchSection(t, m) // Overview -> Commands
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	model := got.(Model)
 
@@ -413,6 +495,7 @@ func TestEscCancelsAddCommandFormWithoutSaving(t *testing.T) {
 
 func TestAddCommandFormRejectsEmptyFields(t *testing.T) {
 	m := New(newTestApp(t), &fakeBack{}, project.Project{Name: "alpha", ID: "p1"})
+	m = switchSection(t, m) // Overview -> Commands
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	model := got.(Model)
 	model.cmdFocus = cmdFieldCommand // enter only submits from the last field
@@ -436,6 +519,7 @@ func TestAddCommandFormSubmitsAndPersists(t *testing.T) {
 	}
 
 	m := New(a, &fakeBack{}, *p)
+	m = switchSection(t, m) // Overview -> Commands
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	model := got.(Model)
 
@@ -484,6 +568,7 @@ func TestDKeyEntersConfirmModeAndYDeletesCommand(t *testing.T) {
 	}
 
 	m := New(a, &fakeBack{}, *p)
+	m = switchSection(t, m) // Overview -> Commands
 
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	model := got.(Model)
@@ -525,6 +610,7 @@ func TestDKeyThenNCancelsWithoutDeletingCommand(t *testing.T) {
 	}
 
 	m := New(a, &fakeBack{}, *p)
+	m = switchSection(t, m) // Overview -> Commands
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	got, _ = got.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	model := got.(Model)
@@ -537,8 +623,19 @@ func TestDKeyThenNCancelsWithoutDeletingCommand(t *testing.T) {
 	}
 }
 
-func TestKeyHintsOmitSelectAndDeleteWhenNoCommands(t *testing.T) {
-	got := keyHints(false)
+func TestSectionKeyHintsOmitCommandHintsOutsideCommandsSection(t *testing.T) {
+	got := sectionKeyHints(sectionOverview, true)
+
+	if strings.Contains(got, "add command") || strings.Contains(got, "select command") || strings.Contains(got, "delete command") {
+		t.Errorf("expected no command-specific hints outside sectionCommands, got %q", got)
+	}
+	if !strings.Contains(got, "switch section") || !strings.Contains(got, "back") {
+		t.Errorf("expected the section-switch and back hints regardless, got %q", got)
+	}
+}
+
+func TestSectionKeyHintsOmitSelectAndDeleteWhenNoCommands(t *testing.T) {
+	got := sectionKeyHints(sectionCommands, false)
 
 	if strings.Contains(got, "select command") || strings.Contains(got, "delete command") {
 		t.Errorf("expected no select/delete hints when there are no commands, got %q", got)
@@ -548,8 +645,8 @@ func TestKeyHintsOmitSelectAndDeleteWhenNoCommands(t *testing.T) {
 	}
 }
 
-func TestKeyHintsIncludeSelectAndDeleteWhenCommandsExist(t *testing.T) {
-	got := keyHints(true)
+func TestSectionKeyHintsIncludeSelectAndDeleteWhenCommandsExist(t *testing.T) {
+	got := sectionKeyHints(sectionCommands, true)
 
 	if !strings.Contains(got, "select command") || !strings.Contains(got, "delete command") {
 		t.Errorf("expected select/delete hints when commands exist, got %q", got)

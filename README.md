@@ -77,7 +77,7 @@ The composition root wiring project, docker, git, and tmux together, plus the cr
 
 ### Interactive Dashboard & Search — Partial
 
-`cmd/devflow` is now the real Bubble Tea entrypoint: a splash screen shows a block-letter "DEVFLOW" banner (`internal/ui/banner`) and tagline, then hands off to a keyboard-navigable project list (`internal/ui/dashboard`) showing each project's favorite marker, tech stack, path, and a Docker badge. Implemented as independent, swappable screen packages under `internal/ui` (see `internal/ui/screen`'s `Screen` interface) sharing a common `internal/ui/theme` style palette. Still pending: search/filtering, a project detail view (Git status, commands, Docker containers/images — `app.ProjectContext` already exists for this), command output streaming, and a tmux session view.
+`cmd/devflow` is now the real Bubble Tea entrypoint: a splash screen shows a purple-to-yellow gradient block-letter "DEVFLOW" banner (`internal/ui/banner`) beside a small static "coworker" mascot, a tagline, and — once the terminal is large enough — a static, color-coded corner badge for each of the four domains (git, docker, tmux, projects), then hands off on keypress to a keyboard-navigable project list (`internal/ui/dashboard`) showing each project's favorite marker, tech stack, path, and a Docker badge. Implemented as independent, swappable screen packages under `internal/ui` (see `internal/ui/screen`'s `Screen` interface) sharing a common `internal/ui/theme` style palette. Still pending: search/filtering, a project detail view (Git status, commands, Docker containers/images — `app.ProjectContext` already exists for this), command output streaming, and a tmux session view.
 
 ### Configuration and Persistence — Partial
 

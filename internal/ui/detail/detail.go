@@ -2,8 +2,9 @@
 // single-project view opened from the dashboard, showing everything
 // about one registered project in one place — its static fields, saved
 // commands (with add/remove), and live Git status and Docker
-// containers/images (via app.ProjectContext). The screen is laid out as
-// a sidebar of sections (Overview, Commands, Git, Docker) next to a
+// containers/images (via app.ProjectContext), and running a saved
+// command with its output streamed live. The screen is laid out as a
+// sidebar of sections (Overview, Commands, Git, Docker) next to a
 // content pane showing only the active one, rather than stacking every
 // section in one long scroll: a single vertical stack of all sections
 // could easily exceed a modest terminal's height (Bubble Tea's
@@ -12,8 +13,10 @@
 // bottom. Showing one short section at a time keeps the whole screen
 // within the terminal's actual size, and the sidebar doubles as an
 // always-visible index of what's available and how to get to it.
-// Running a saved command with streamed output is added in a later
-// change.
+// Pressing "r" on a selected command in the Commands section runs it
+// through app.RunCommand and shows its live stdout/stderr in a
+// scrollable pane (bubbles/viewport), polled from the tracked
+// runner.Process until it finishes.
 package detail
 
 import (

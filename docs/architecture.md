@@ -146,8 +146,15 @@ These are used by domain packages but hold no domain rules of their own.
   for its Git/Docker panes, while its Commands pane (list, add, delete —
   reusing `bubbles/textinput` for the add form) works directly off the
   already-in-memory `project.Project`, needing no fetch of its own.
-  Running a saved command with streamed output is not part of this
-  screen yet.
+  Pressing "r" on a selected command runs it through `app.RunCommand`
+  and switches the pane to a scrollable `bubbles/viewport` of its live
+  stdout/stderr: a `tea.Tick`-driven poll loop (`pollProcessCmd`) reads
+  one `runner.Process.Snapshot` at a time and re-arms itself only while
+  the process is still running, the first repeating Bubble Tea Cmd
+  pattern in the codebase (every other async fetch here is a one-shot
+  request/response). "s" stops a run early without leaving the pane;
+  "esc" stops it (if still running — nothing else can reach the
+  process) and returns to browsing Commands.
 
 ## Recommended Repository Layout
 

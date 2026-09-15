@@ -105,40 +105,43 @@ func TestViewCentersOnceSizeKnown(t *testing.T) {
 	}
 }
 
-func TestViewContainsMascotRegardlessOfSize(t *testing.T) {
+func TestViewHasNoMascotBesideBannerWhenSizeUnknown(t *testing.T) {
 	m := New(&fakeScreen{})
 
-	if !strings.Contains(m.View(), "◕") {
-		t.Error("expected the view to contain the coworker mascot, even with no size known yet")
+	if strings.Contains(m.View(), "◕") {
+		t.Error("expected no mascot beside the banner before its transition into corner mascots (size unknown)")
 	}
 }
 
-func TestViewIncludesDomainBadgesWhenTerminalLargeEnough(t *testing.T) {
+func TestViewIncludesDomainMascotsWhenTerminalLargeEnough(t *testing.T) {
 	m := New(&fakeScreen{})
 
-	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForBadges, Height: minHeightForBadges})
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForMascots, Height: minHeightForMascots})
 	view := sized.(Model).View()
 
 	for _, glyph := range []string{gitGlyph, dockerGlyph, tmuxGlyph, projectsGlyph} {
 		if !strings.Contains(view, glyph) {
-			t.Errorf("expected view to contain domain badge glyph %q, got %q", glyph, view)
+			t.Errorf("expected view to contain domain mascot glyph %q, got %q", glyph, view)
 		}
+	}
+	if !strings.Contains(view, "◕") {
+		t.Error("expected view to contain the block-art mascot bodies")
 	}
 
 	lines := strings.Split(view, "\n")
-	if len(lines) != minHeightForBadges {
-		t.Errorf("expected badged view to still fill the terminal height (%d lines), got %d", minHeightForBadges, len(lines))
+	if len(lines) != minHeightForMascots {
+		t.Errorf("expected mascotted view to still fill the terminal height (%d lines), got %d", minHeightForMascots, len(lines))
 	}
 }
 
-func TestViewOmitsDomainBadgesWhenTerminalTooSmall(t *testing.T) {
+func TestViewOmitsDomainMascotsWhenTerminalTooSmall(t *testing.T) {
 	m := New(&fakeScreen{})
 
-	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForBadges - 1, Height: minHeightForBadges})
+	sized, _ := m.Update(tea.WindowSizeMsg{Width: minWidthForMascots - 1, Height: minHeightForMascots})
 	view := sized.(Model).View()
 
 	if strings.Contains(view, gitGlyph) {
-		t.Error("expected domain badges to be omitted on a terminal narrower than minWidthForBadges")
+		t.Error("expected domain mascots to be omitted on a terminal narrower than minWidthForMascots")
 	}
 	if !strings.Contains(view, "press any key") {
 		t.Error("expected the plain centered content to still render")

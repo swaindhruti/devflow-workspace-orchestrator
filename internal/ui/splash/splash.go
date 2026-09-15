@@ -26,34 +26,15 @@ var (
 	gradientTo   = lipgloss.Color("#FACC15")
 )
 
-// coworkerMascot is a small static block-art character — a friendly robot
-// face — rendered beside the banner so the splash reads as "a coworker
-// greeting you" rather than a bare logo. It is deliberately a single
-// fixed frame (no wave/blink animation): the user asked for the corner
-// badges below to stay unanimated for performance and memory efficiency,
-// and a moving mascot next to four static badges would read as
-// inconsistent, so the whole splash stays static.
-var coworkerMascot = []string{
-	"╭─────╮",
-	"│ ◕ ◕ │",
-	"│  ▾  │",
-	"╰┬───┬╯",
-	"  │ │  ",
-}
-
-// mascotStyle renders coworkerMascot in the app's primary accent color —
-// present enough to read as a character, but flat (not gradient) so it
-// doesn't compete with the banner for attention.
-var mascotStyle = lipgloss.NewStyle().Foreground(theme.Primary)
-
-// Domain badge glyphs and colors. Each of DevFlow's four domains — git,
+// Domain mascot glyphs and colors. Each of DevFlow's four domains — git,
 // docker, tmux, and the project registry itself — gets a one-character
-// glyph and its own accent color, so the four corner badges (built with
-// newBadge and placed in View) act as an at-a-glance legend of the app's
-// feature set. Glyphs are chosen from narrow, single-cell Unicode symbols (not
-// emoji, which often render double-width and break the badges' fixed
-// layout) and colors are AdaptiveColor so each badge stays legible in
-// both light and dark terminals.
+// glyph and its own accent color. newMascot uses these to build the four
+// corner characters placed by View, so the corners double as an
+// at-a-glance legend of DevFlow's feature set. Glyphs are chosen from
+// narrow, single-cell Unicode symbols (not emoji, which often render
+// double-width and break the mascots' fixed layout) and colors are
+// AdaptiveColor so each mascot stays legible in both light and dark
+// terminals.
 const (
 	gitGlyph      = "⎇" // branch symbol
 	dockerGlyph   = "▦" // stacked containers
@@ -68,44 +49,63 @@ var (
 	projectsColor = lipgloss.AdaptiveColor{Light: "#A21CAF", Dark: "#E879F9"}
 )
 
-// badgeWidth and badgeHeight are the fixed dimensions (in terminal cells)
-// of every badge rendered by newBadge. Keeping every badge identical in
-// size is what makes the corner layout math in View a simple subtraction
-// rather than a per-badge measurement.
+// mascotWidth and mascotHeight are the fixed dimensions (in terminal
+// cells) of every character rendered by newMascot. Keeping every mascot
+// identical in size is what makes the corner layout math in View a
+// simple subtraction rather than a per-mascot measurement.
 const (
-	badgeWidth  = 7
-	badgeHeight = 3
+	mascotWidth  = 9
+	mascotHeight = 7
 )
 
-// minWidthForBadges and minHeightForBadges are the smallest terminal
-// dimensions at which View still has room to place all four corner
-// badges without them colliding with the centered banner/mascot. Below
-// this, View falls back to the plain centered layout used before the
-// corner badges existed.
-const (
-	minWidthForBadges  = 60
-	minHeightForBadges = 20
-)
+// mascotBody is the shared block-art robot body every domain mascot is
+// built from: a rounded head with two eyes, a small mouth, and two
+// planted feet. Only the antenna glyph on top (see newMascot) and the
+// color vary per domain, so the four corner characters read as one
+// consistent cast — like a small crew representing DevFlow's
+// capabilities — rather than four unrelated icons.
+var mascotBody = []string{
+	" ╭─────╮ ",
+	" │ ◕ ◕ │ ",
+	" │  ▾  │ ",
+	" ╰┬───┬╯ ",
+	"   │ │   ",
+}
 
-// newBadge renders one domain corner badge: glyph boxed in a fixed
-// badgeWidth x badgeHeight frame, styled in the given color.
+// newMascot renders one domain's corner character: mascotBody topped
+// with an antenna holding up the domain's glyph, styled in the domain's
+// color. It is a single fixed frame — no wave/blink animation — since
+// the mascots need to stay cheap to render (precomputed strings, no
+// tea.Tick, no per-frame state) and a moving character in only one
+// corner while the other three stood still would read as inconsistent.
 //
 // Parameters:
 //   - glyph: the single-cell symbol identifying the domain (e.g.
-//     gitGlyph). Must be exactly one terminal cell wide for the box to
-//     stay badgeWidth cells across every row.
-//   - style: the (already color-configured) style to render the badge
+//     gitGlyph). Must be exactly one terminal cell wide so the antenna
+//     stays centered over mascotBody.
+//   - style: the (already color-configured) style to render the mascot
 //     in — see gitColor/dockerColor/tmuxColor/projectsColor.
 //
-// Returns the styled, multi-line badge string.
-func newBadge(glyph string, style lipgloss.Style) string {
-	lines := []string{
-		"╭─────╮",
-		"│  " + glyph + "  │",
-		"╰─────╯",
-	}
+// Returns the styled, multi-line mascot string, mascotWidth cells wide
+// and mascotHeight lines tall.
+func newMascot(glyph string, style lipgloss.Style) string {
+	pad := strings.Repeat(" ", (mascotWidth-1)/2)
+	lines := append([]string{
+		pad + glyph + pad,
+		pad + "│" + pad,
+	}, mascotBody...)
 	return style.Render(strings.Join(lines, "\n"))
 }
+
+// minWidthForMascots and minHeightForMascots are the smallest terminal
+// dimensions at which View still has room to place all four corner
+// mascots without them colliding with the centered banner. Below this,
+// View falls back to the plain centered layout used before the corner
+// mascots existed.
+const (
+	minWidthForMascots  = 60
+	minHeightForMascots = 30
+)
 
 // Model is the splash screen. It shows the DevFlow banner and hands
 // control to the configured next screen.Screen as soon as the user
@@ -151,23 +151,22 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	}
 }
 
-// View renders the DevFlow banner (as a purple-to-yellow gradient) beside
-// the coworker mascot, plus the tagline and continue hint, centered in
-// the terminal once its size is known. Once the terminal is large enough
-// (see minWidthForBadges/minHeightForBadges), it also places a static,
-// color-coded domain badge in each of the four corners — git top-left,
-// docker top-right, tmux bottom-left, projects bottom-right — so the
-// splash doubles as an at-a-glance legend of DevFlow's feature set.
+// View renders the DevFlow banner (as a purple-to-yellow gradient), plus
+// the tagline and continue hint, centered in the terminal once its size
+// is known. Once the terminal is large enough (see
+// minWidthForMascots/minHeightForMascots), it also places a static,
+// color-coded block-art character in each of the four corners — git
+// top-left, docker top-right, tmux bottom-left, projects bottom-right —
+// so the splash doubles as an at-a-glance legend of DevFlow's feature
+// set, and reads as a small crew greeting the user rather than a bare
+// logo screen.
 func (m Model) View() string {
 	bannerLines := strings.Split(banner.Render("DEVFLOW", "██", "  "), "\n")
 	gradientBanner := theme.Gradient(bannerLines, gradientFrom, gradientTo)
-	mascot := mascotStyle.Render(strings.Join(coworkerMascot, "\n"))
-
-	lockup := lipgloss.JoinHorizontal(lipgloss.Center, mascot, "   ", gradientBanner)
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Center,
-		lockup,
+		gradientBanner,
 		"",
 		theme.SubtleStyle.Render(tagline),
 		"",
@@ -178,20 +177,20 @@ func (m Model) View() string {
 		return content
 	}
 
-	if m.width < minWidthForBadges || m.height < minHeightForBadges {
+	if m.width < minWidthForMascots || m.height < minHeightForMascots {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 	}
 
-	gitBadge := newBadge(gitGlyph, lipgloss.NewStyle().Foreground(gitColor))
-	dockerBadge := newBadge(dockerGlyph, lipgloss.NewStyle().Foreground(dockerColor))
-	tmuxBadge := newBadge(tmuxGlyph, lipgloss.NewStyle().Foreground(tmuxColor))
-	projectsBadge := newBadge(projectsGlyph, lipgloss.NewStyle().Foreground(projectsColor))
+	gitMascot := newMascot(gitGlyph, lipgloss.NewStyle().Foreground(gitColor))
+	dockerMascot := newMascot(dockerGlyph, lipgloss.NewStyle().Foreground(dockerColor))
+	tmuxMascot := newMascot(tmuxGlyph, lipgloss.NewStyle().Foreground(tmuxColor))
+	projectsMascot := newMascot(projectsGlyph, lipgloss.NewStyle().Foreground(projectsColor))
 
-	spacer := strings.Repeat(" ", m.width-2*badgeWidth)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, gitBadge, spacer, dockerBadge)
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, tmuxBadge, spacer, projectsBadge)
+	spacer := strings.Repeat(" ", m.width-2*mascotWidth)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, gitMascot, spacer, dockerMascot)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, tmuxMascot, spacer, projectsMascot)
 
-	middleHeight := m.height - 2*badgeHeight - 2
+	middleHeight := m.height - 2*mascotHeight - 2
 	middle := lipgloss.Place(m.width, middleHeight, lipgloss.Center, lipgloss.Center, content)
 
 	return strings.Join([]string{topRow, "", middle, "", bottomRow}, "\n")

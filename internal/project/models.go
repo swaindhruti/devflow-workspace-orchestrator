@@ -13,7 +13,7 @@ package project
 // DevFlow needs to present and operate on it.
 type Project struct {
 	// ID uniquely identifies the project. It is assigned by Service.AddProject
-	// (via generateID) and must never be set by callers before that point.
+	// (via GenerateID) and must never be set by callers before that point.
 	ID string `json:"id"`
 	// Name is the human-readable project name shown in the dashboard.
 	Name string `json:"name"`

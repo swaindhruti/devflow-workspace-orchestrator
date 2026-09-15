@@ -24,11 +24,18 @@ func NewProjectService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-// generateID produces a random 32-character hex string suitable for use as
-// a Project.ID. It returns an empty string if the system's random source
-// could not be read, which callers should treat as a failure to generate an
-// ID rather than a valid empty ID.
-func generateID() string {
+// GenerateID produces a random 32-character hex string suitable for use
+// as a Project.ID or a Command.ID. It returns an empty string if the
+// system's random source could not be read, which callers should treat
+// as a failure to generate an ID rather than a valid empty ID.
+//
+// Exported (rather than kept private to Service, as it originally was)
+// because Command IDs are assigned by callers — commands.go's
+// AddCommand takes an already-built Command and does not generate one
+// itself, unlike Service.AddProject — so anything constructing a new
+// Command (e.g. the detail screen's "add a command" form) needs the
+// same ID scheme Projects already use.
+func GenerateID() string {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	if err != nil {
@@ -69,7 +76,7 @@ func (s *Service) GetProjectByID(id string) (*Project, error) {
 // Docker context and make "delete the project at this path" meaningless),
 // or if the underlying Repository could not be read or written.
 func (s *Service) AddProject(project *Project) error {
-	project.ID = generateID()
+	project.ID = GenerateID()
 	if err := ValidateProject(project); err != nil {
 		return err
 	}

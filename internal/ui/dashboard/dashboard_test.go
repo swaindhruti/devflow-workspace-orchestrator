@@ -12,6 +12,7 @@ import (
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/config"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/shellexec"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/detail"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/projectform"
 )
 
@@ -156,6 +157,39 @@ func TestEKeyDoesNothingWhenListIsEmpty(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("expected no command when there's nothing to edit")
+	}
+}
+
+func TestEnterKeyOpensDetailScreen(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	m := New(a)
+	m.projects = []project.Project{*p}
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if _, ok := got.(detail.Model); !ok {
+		t.Fatalf("expected enter to open detail.Model, got %T", got)
+	}
+	if cmd != nil {
+		t.Error("expected detail.Model's Init (nil for now) to propagate as the command")
+	}
+}
+
+func TestEnterKeyDoesNothingWhenListIsEmpty(t *testing.T) {
+	m := New(newTestApp(t))
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if _, ok := got.(Model); !ok {
+		t.Fatalf("expected enter on an empty list to leave the dashboard active, got %T", got)
+	}
+	if cmd != nil {
+		t.Error("expected no command when there's nothing to view")
 	}
 }
 

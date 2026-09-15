@@ -134,13 +134,20 @@ These are used by domain packages but hold no domain rules of their own.
   is built on `charmbracelet/bubbles` (`filepicker`, `textinput`) rather
   than hand-rolled widgets, since a directory browser and text input are
   exactly what that library already provides. `internal/ui/detail` is
-  the per-project view: it fetches `app.ProjectContext` asynchronously
-  (a `tea.Cmd`, so the screen doesn't block while it shells out to git
-  and, if configured, docker) for its Git/Docker sections, while its
-  saved-commands section (list, add, delete — reusing `bubbles/textinput`
-  for the add form) works directly off the already-in-memory
-  `project.Project`, needing no fetch of its own. Running a saved
-  command with streamed output is not part of this screen yet.
+  the per-project view, laid out as a sidebar of sections (Overview,
+  Commands, Git, Docker) next to a content pane showing only the active
+  one, rather than stacking every section in one long vertical scroll —
+  which could exceed a modest terminal's height (Bubble Tea's alt-screen
+  buffer doesn't scroll) and push a later section, Docker in particular,
+  off the bottom invisibly. The sidebar doubles as the screen's own
+  always-visible index of what it can show and how to reach it. It
+  fetches `app.ProjectContext` asynchronously (a `tea.Cmd`, so the screen
+  doesn't block while it shells out to git and, if configured, docker)
+  for its Git/Docker panes, while its Commands pane (list, add, delete —
+  reusing `bubbles/textinput` for the add form) works directly off the
+  already-in-memory `project.Project`, needing no fetch of its own.
+  Running a saved command with streamed output is not part of this
+  screen yet.
 
 ## Recommended Repository Layout
 

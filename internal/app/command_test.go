@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/runner"
 )
 
 func TestRunCommandExecutesPlainCommand(t *testing.T) {
@@ -83,5 +85,49 @@ func TestRunCommandReturnsErrorForUnknownCommandID(t *testing.T) {
 
 	if _, err := a.RunCommand(p.ID, "does-not-exist"); err == nil {
 		t.Fatal("expected error for unknown command ID, got nil")
+	}
+}
+
+func TestStopCommandStopsARunningProcess(t *testing.T) {
+	a := newTestApp(t)
+
+	p, err := a.AddProject("myapp", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	cmd := project.Command{ID: "cmd-1", Name: "Sleep", Command: "sleep 5"}
+	p.AddCommand(cmd)
+	if err := a.Projects().UpdateProject(p); err != nil {
+		t.Fatalf("failed to save command: %v", err)
+	}
+
+	proc, err := a.RunCommand(p.ID, "cmd-1")
+	if err != nil {
+		t.Fatalf("did not expect error but got %v", err)
+	}
+
+	if err := a.StopCommand(proc.ID); err != nil {
+		t.Fatalf("did not expect error but got %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if proc.State() != runner.StateRunning {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if state := proc.State(); state != runner.StateStopped {
+		t.Fatalf("expected stopped state, got %s", state)
+	}
+}
+
+func TestStopCommandReturnsErrorForUnknownID(t *testing.T) {
+	a := newTestApp(t)
+
+	if err := a.StopCommand("does-not-exist"); err == nil {
+		t.Fatal("expected error for unknown process ID, got nil")
 	}
 }

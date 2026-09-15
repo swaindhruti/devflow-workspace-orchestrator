@@ -47,3 +47,16 @@ func (a *App) RunCommand(projectID, commandID string) (*runner.Process, error) {
 
 	return nil, fmt.Errorf("command not found: %s", commandID)
 }
+
+// StopCommand stops a running process previously started via RunCommand,
+// by its Process.ID. Works uniformly for plain and Docker commands, since
+// both are started through the same shared runner.Runner.
+//
+// Parameters:
+//   - processID: the runner.Process.ID to stop, as returned by RunCommand.
+//
+// Returns an error if no such process is tracked, or if it isn't
+// currently running.
+func (a *App) StopCommand(processID string) error {
+	return a.runner.Stop(processID)
+}

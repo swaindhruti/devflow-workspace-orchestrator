@@ -1,4 +1,4 @@
-package addproject
+package projectform
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 
 	appPkg "github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/config"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/shellexec"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 )
@@ -45,7 +46,7 @@ func (f *fakeBack) Update(tea.Msg) (screen.Screen, tea.Cmd) { return f, nil }
 func (f *fakeBack) View() string                            { return "back" }
 
 func TestNewStartsOnBrowseStep(t *testing.T) {
-	m := New(newTestApp(t), &fakeBack{})
+	m := NewAdd(newTestApp(t), &fakeBack{})
 
 	if m.step != stepBrowse {
 		t.Errorf("expected New to start on stepBrowse, got %v", m.step)
@@ -53,7 +54,7 @@ func TestNewStartsOnBrowseStep(t *testing.T) {
 }
 
 func TestInitReturnsPickerLoadCommand(t *testing.T) {
-	m := New(newTestApp(t), &fakeBack{})
+	m := NewAdd(newTestApp(t), &fakeBack{})
 
 	if cmd := m.Init(); cmd == nil {
 		t.Error("expected Init to return the picker's directory-load command")
@@ -62,7 +63,7 @@ func TestInitReturnsPickerLoadCommand(t *testing.T) {
 
 func TestQCancelsFromBrowseStep(t *testing.T) {
 	back := &fakeBack{}
-	m := New(newTestApp(t), back)
+	m := NewAdd(newTestApp(t), back)
 
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 
@@ -75,7 +76,7 @@ func TestQCancelsFromBrowseStep(t *testing.T) {
 }
 
 func TestSChoosesCurrentDirectoryAndAdvancesToDetails(t *testing.T) {
-	m := New(newTestApp(t), &fakeBack{})
+	m := NewAdd(newTestApp(t), &fakeBack{})
 	dir := t.TempDir()
 	m.picker.CurrentDirectory = dir
 
@@ -98,7 +99,7 @@ func TestSChoosesCurrentDirectoryAndAdvancesToDetails(t *testing.T) {
 // user had pressed "s" in dir, ready for detail-step tests.
 func atDetailsStep(t *testing.T, back screen.Screen) Model {
 	t.Helper()
-	m := New(newTestApp(t), back)
+	m := NewAdd(newTestApp(t), back)
 	m.picker.CurrentDirectory = t.TempDir()
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	return got.(Model)
@@ -183,7 +184,7 @@ func TestSubmitAddsProjectAndReturnsToBack(t *testing.T) {
 	back := &fakeBack{}
 	dir := t.TempDir()
 
-	m := New(a, back)
+	m := NewAdd(a, back)
 	m.picker.CurrentDirectory = dir
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	model := got.(Model)
@@ -249,7 +250,7 @@ func TestParseTags(t *testing.T) {
 }
 
 func TestViewShowsBrowsePathAndHelp(t *testing.T) {
-	m := New(newTestApp(t), &fakeBack{})
+	m := NewAdd(newTestApp(t), &fakeBack{})
 	dir := t.TempDir()
 	m.picker.CurrentDirectory = dir
 
@@ -274,5 +275,149 @@ func TestViewShowsFormFieldsAndError(t *testing.T) {
 	}
 	if !strings.Contains(view, "error:") {
 		t.Error("expected the error to be rendered")
+	}
+}
+
+// existingProject builds a project.Project with fields the edit form
+// never exposes (IsFavorite, HasDocker, RunCommands) populated, so
+// tests can confirm submit preserves them rather than wiping them out.
+func existingProject(path string) project.Project {
+	return project.Project{
+		ID:          "proj-1",
+		Name:        "alpha",
+		Description: "original description",
+		Path:        path,
+		TechStack:   []string{"go"},
+		IsFavorite:  true,
+		HasDocker:   true,
+		RunCommands: []project.Command{{ID: "cmd-1", ProjectID: "proj-1", Name: "test", Command: "go test ./..."}},
+	}
+}
+
+func TestNewEditStartsOnDetailsStepPrefilled(t *testing.T) {
+	p := existingProject(t.TempDir())
+	m := NewEdit(newTestApp(t), &fakeBack{}, p)
+
+	if m.step != stepDetails {
+		t.Fatalf("expected NewEdit to start on stepDetails, got %v", m.step)
+	}
+	if m.path != p.Path {
+		t.Errorf("expected path to be prefilled with %q, got %q", p.Path, m.path)
+	}
+	if got := m.inputs[fieldName].Value(); got != p.Name {
+		t.Errorf("expected name prefilled with %q, got %q", p.Name, got)
+	}
+	if got := m.inputs[fieldDescription].Value(); got != p.Description {
+		t.Errorf("expected description prefilled with %q, got %q", p.Description, got)
+	}
+	if got := m.inputs[fieldTags].Value(); got != "go" {
+		t.Errorf("expected tags prefilled with %q, got %q", "go", got)
+	}
+	if !m.inputs[fieldName].Focused() {
+		t.Error("expected the name field to start focused")
+	}
+}
+
+func TestNewEditInitStartsCursorBlink(t *testing.T) {
+	m := NewEdit(newTestApp(t), &fakeBack{}, existingProject(t.TempDir()))
+
+	if cmd := m.Init(); cmd == nil {
+		t.Error("expected Init to return a Cmd that starts the cursor blinking")
+	}
+}
+
+func TestEditSubmitUpdatesOnlyFormFields(t *testing.T) {
+	a := newTestApp(t)
+	dir := t.TempDir()
+	original := existingProject(dir)
+	if err := a.Projects().AddProject(&original); err != nil {
+		t.Fatalf("failed to seed the project: %v", err)
+	}
+
+	back := &fakeBack{}
+	m := NewEdit(a, back, original)
+	m.inputs[fieldName].SetValue("alpha-renamed")
+	m.inputs[fieldDescription].SetValue("updated description")
+	m.inputs[fieldTags].SetValue("go, cli")
+	m.focus = fieldTags // enter only submits from the last field
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got != screen.Screen(back) {
+		t.Fatal("expected a successful submit to return the back screen")
+	}
+	if !back.initCalled {
+		t.Error("expected the back screen's Init to have been called")
+	}
+
+	saved, err := a.Projects().GetProjectByID(original.ID)
+	if err != nil {
+		t.Fatalf("failed to reload the project: %v", err)
+	}
+	if saved.Name != "alpha-renamed" {
+		t.Errorf("expected name to be updated, got %q", saved.Name)
+	}
+	if saved.Description != "updated description" {
+		t.Errorf("expected description to be updated, got %q", saved.Description)
+	}
+	if len(saved.TechStack) != 2 || saved.TechStack[0] != "go" || saved.TechStack[1] != "cli" {
+		t.Errorf("expected tags [go cli], got %v", saved.TechStack)
+	}
+
+	// Fields the form never exposed must survive the edit untouched.
+	if saved.Path != dir {
+		t.Errorf("expected path to be preserved, got %q", saved.Path)
+	}
+	if !saved.IsFavorite {
+		t.Error("expected IsFavorite to be preserved")
+	}
+	if !saved.HasDocker {
+		t.Error("expected HasDocker to be preserved")
+	}
+	if len(saved.RunCommands) != 1 || saved.RunCommands[0].Name != "test" {
+		t.Errorf("expected RunCommands to be preserved, got %v", saved.RunCommands)
+	}
+}
+
+func TestEditSubmitRejectsEmptyName(t *testing.T) {
+	m := NewEdit(newTestApp(t), &fakeBack{}, existingProject(t.TempDir()))
+	m.inputs[fieldName].SetValue("")
+	m.focus = fieldTags
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model := got.(Model)
+
+	if model.err == nil {
+		t.Fatal("expected an error for an empty name")
+	}
+	if model.step != stepDetails {
+		t.Error("expected to stay on stepDetails after a validation error")
+	}
+}
+
+func TestEscCancelsFromEditForm(t *testing.T) {
+	back := &fakeBack{}
+	m := NewEdit(newTestApp(t), back, existingProject(t.TempDir()))
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if got != screen.Screen(back) {
+		t.Fatal("expected esc to return the back screen")
+	}
+	if !back.initCalled {
+		t.Error("expected the back screen's Init to have been called")
+	}
+}
+
+func TestEditViewShowsEditTitleAndPath(t *testing.T) {
+	p := existingProject(t.TempDir())
+	m := NewEdit(newTestApp(t), &fakeBack{}, p)
+
+	view := m.View()
+	if !strings.Contains(view, "Edit Project") {
+		t.Error("expected the edit-mode title")
+	}
+	if !strings.Contains(view, p.Path) {
+		t.Error("expected the existing path to be shown")
 	}
 }

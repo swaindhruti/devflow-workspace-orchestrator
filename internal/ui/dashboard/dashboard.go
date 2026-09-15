@@ -21,8 +21,8 @@ import (
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
-	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/addproject"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/banner"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/projectform"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/theme"
 )
@@ -111,7 +111,7 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 
 // updateList handles a keypress while in modeList: cursor movement,
 // favorite toggling, entering delete confirmation, opening the
-// add-project screen, and quit.
+// add-project or edit-project screen, and quit.
 func (m Model) updateList(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -134,8 +134,14 @@ func (m Model) updateList(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 		}
 
 	case "a":
-		next := addproject.New(m.app, m)
+		next := projectform.NewAdd(m.app, m)
 		return next, next.Init()
+
+	case "e":
+		if m.cursor < len(m.projects) {
+			next := projectform.NewEdit(m.app, m, m.projects[m.cursor])
+			return next, next.Init()
+		}
 
 	case "q":
 		return m, tea.Quit
@@ -215,6 +221,7 @@ func (m *Model) deleteSelected() {
 var keyHints = theme.KeyHints([][2]string{
 	{"↑/k ↓/j", "navigate"},
 	{"a", "add project"},
+	{"e", "edit"},
 	{"f", "toggle favorite"},
 	{"d", "delete"},
 	{"q", "quit"},

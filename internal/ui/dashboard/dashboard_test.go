@@ -12,7 +12,7 @@ import (
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/config"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/shellexec"
-	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/addproject"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/projectform"
 )
 
 // newTestApp builds a real App backed by a disposable temp registry, the
@@ -118,11 +118,44 @@ func TestAKeyOpensAddProjectScreen(t *testing.T) {
 
 	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 
-	if _, ok := got.(addproject.Model); !ok {
-		t.Fatalf("expected a to open addproject.Model, got %T", got)
+	if _, ok := got.(projectform.Model); !ok {
+		t.Fatalf("expected a to open projectform.Model, got %T", got)
 	}
 	if cmd == nil {
 		t.Error("expected a non-nil Init command from the new screen")
+	}
+}
+
+func TestEKeyOpensEditProjectScreen(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	m := New(a)
+	m.projects = []project.Project{*p}
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+
+	if _, ok := got.(projectform.Model); !ok {
+		t.Fatalf("expected e to open projectform.Model, got %T", got)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil Init command from the new screen")
+	}
+}
+
+func TestEKeyDoesNothingWhenListIsEmpty(t *testing.T) {
+	m := New(newTestApp(t))
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+
+	if _, ok := got.(Model); !ok {
+		t.Fatalf("expected e on an empty list to leave the dashboard active, got %T", got)
+	}
+	if cmd != nil {
+		t.Error("expected no command when there's nothing to edit")
 	}
 }
 

@@ -114,20 +114,23 @@ These are used by domain packages but hold no domain rules of their own.
 - **`internal/ui`** — the Bubble Tea + Lip Gloss terminal interface:
   rendering, keyboard input, and view state, with no business logic of
   its own. Modular by construction: each top-level view (`splash`,
-  `dashboard`, `addproject`, and whatever follows) is its own subpackage
-  implementing a shared `Screen` interface (`internal/ui/screen`), so
-  views are independently testable and swappable rather than one large
-  model. The root `internal/ui` package owns the `rootModel` that
-  delegates to whichever `Screen` is currently active; it also tracks
-  the terminal's last known size and re-delivers it, as a synthetic
-  `tea.WindowSizeMsg`, to whatever screen becomes active after a
-  keypress — Bubble Tea itself only sends a real one on startup and on
-  an actual resize, not when a screen swaps itself out internally, and
-  some screens (a `bubbles/filepicker`, in particular) render close to
-  nothing without a known size. `internal/ui/theme` holds the shared
-  color tokens and base styles every screen renders from, and
-  `internal/ui/banner` is a small standalone block-letter text renderer
-  (used by `splash` for the startup banner). `internal/ui/addproject`
+  `dashboard`, `projectform`, and whatever follows) is its own
+  subpackage implementing a shared `Screen` interface
+  (`internal/ui/screen`), so views are independently testable and
+  swappable rather than one large model. The root `internal/ui` package
+  owns the `rootModel` that delegates to whichever `Screen` is currently
+  active; it also tracks the terminal's last known size and re-delivers
+  it, as a synthetic `tea.WindowSizeMsg`, to whatever screen becomes
+  active after a keypress — Bubble Tea itself only sends a real one on
+  startup and on an actual resize, not when a screen swaps itself out
+  internally, and some screens (a `bubbles/filepicker`, in particular)
+  render close to nothing without a known size. `internal/ui/theme`
+  holds the shared color tokens and base styles every screen renders
+  from, and `internal/ui/banner` is a small standalone block-letter text
+  renderer (used by `splash` for the startup banner, and again by
+  `dashboard` for a smaller masthead logo above its panel).
+  `internal/ui/projectform` handles both adding and editing a project as
+  one screen (they differ only in how they start and how they save) and
   is built on `charmbracelet/bubbles` (`filepicker`, `textinput`) rather
   than hand-rolled widgets, since a directory browser and text input are
   exactly what that library already provides.
@@ -156,7 +159,7 @@ internal/
         banner/
         splash/
         dashboard/
-        addproject/
+        projectform/
 
 assets/
 scripts/

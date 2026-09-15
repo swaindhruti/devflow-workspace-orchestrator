@@ -1,8 +1,13 @@
-// Package addproject implements DevFlow's "add a project" flow: a
-// two-step screen that first lets the user browse the filesystem to
-// pick a project directory (via bubbles/filepicker), then fills in the
-// project's name, description, and tech stack before registering it.
-package addproject
+// Package projectform implements DevFlow's add-project and edit-project
+// flows, sharing one screen since they differ only in how they start and
+// how they save: adding is a two-step flow that first lets the user
+// browse the filesystem to pick a project directory (via
+// bubbles/filepicker) before filling in the project's name,
+// description, and tech stack and registering it; editing skips
+// straight to that same name/description/tags form, prefilled from an
+// existing project whose path can't be changed, and saves over it
+// instead of registering a new one.
+package projectform
 
 import (
 	"fmt"
@@ -16,6 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/theme"
 )
@@ -47,10 +53,18 @@ var fieldLabels = [fieldCount]string{
 	fieldTags:        "Tags",
 }
 
-// Model is the add-project screen.
+// Model is the add-project/edit-project screen.
 type Model struct {
 	app  *app.App
 	back screen.Screen
+
+	// editing is nil when this Model is registering a new project.
+	// Non-nil, it holds the project being edited: submit saves over it
+	// (preserving every field the form doesn't expose — IsFavorite,
+	// HasDocker, DockerIdentifier, RunCommands, and so on) instead of
+	// calling app.AddProject, and stepBrowse is never entered since the
+	// path of an already-registered project isn't editable here.
+	editing *project.Project
 
 	step   step
 	picker filepicker.Model
@@ -64,17 +78,8 @@ type Model struct {
 	width, height int
 }
 
-// New constructs an add-project screen.
-//
-// Parameters:
-//   - a: the wired application layer AddProject registers the new
-//     project through.
-//   - back: the screen to return to once the flow finishes — either
-//     because the user cancelled (esc/"q"), or because the project was
-//     registered successfully. Model calls back.Init() itself at the
-//     moment of transition, the same way every other screen.Screen
-//     transition in this codebase works (see e.g. internal/ui/splash).
-func New(a *app.App, back screen.Screen) Model {
+// newFilePicker builds the directory picker shared by NewAdd's stepBrowse.
+func newFilePicker() filepicker.Model {
 	fp := filepicker.New()
 	// Both left false: Enter always just navigates into a directory,
 	// never "selects" one. bubbles/filepicker's own Select/Open
@@ -102,7 +107,13 @@ func New(a *app.App, back screen.Screen) Model {
 	fp.Styles.Directory = lipgloss.NewStyle().Foreground(theme.Primary)
 	fp.Styles.Cursor = lipgloss.NewStyle().Foreground(theme.Accent)
 	fp.Styles.Selected = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	return fp
+}
 
+// newInputs builds the shared name/description/tags fields, optionally
+// prefilled from an existing project (pass nil for a blank add-project
+// form).
+func newInputs(prefill *project.Project) [fieldCount]textinput.Model {
 	var inputs [fieldCount]textinput.Model
 	inputs[fieldName] = textinput.New()
 	inputs[fieldName].Placeholder = "my-project"
@@ -116,17 +127,72 @@ func New(a *app.App, back screen.Screen) Model {
 	inputs[fieldTags].Placeholder = "optional, comma separated — e.g. go, docker"
 	inputs[fieldTags].CharLimit = 200
 
+	if prefill != nil {
+		inputs[fieldName].SetValue(prefill.Name)
+		inputs[fieldDescription].SetValue(prefill.Description)
+		inputs[fieldTags].SetValue(strings.Join(prefill.TechStack, ", "))
+	}
+
+	return inputs
+}
+
+// NewAdd constructs an add-project screen, starting on stepBrowse.
+//
+// Parameters:
+//   - a: the wired application layer AddProject registers the new
+//     project through.
+//   - back: the screen to return to once the flow finishes — either
+//     because the user cancelled (esc/"q"), or because the project was
+//     registered successfully. Model calls back.Init() itself at the
+//     moment of transition, the same way every other screen.Screen
+//     transition in this codebase works (see e.g. internal/ui/splash).
+func NewAdd(a *app.App, back screen.Screen) Model {
 	return Model{
 		app:    a,
 		back:   back,
 		step:   stepBrowse,
-		picker: fp,
-		inputs: inputs,
+		picker: newFilePicker(),
+		inputs: newInputs(nil),
 	}
 }
 
-// Init kicks off the directory picker's initial listing.
+// NewEdit constructs an edit-project screen for an already-registered
+// project, starting straight on stepDetails (prefilled from p) since
+// there's no path to browse to — an existing project's path isn't
+// editable here.
+//
+// Parameters:
+//   - a: the wired application layer UpdateProject saves changes
+//     through.
+//   - back: the screen to return to once the flow finishes, same
+//     contract as NewAdd's back parameter.
+//   - p: the project to edit. A copy is kept (see Model.editing) so
+//     submit can save over every field the form doesn't expose.
+func NewEdit(a *app.App, back screen.Screen, p project.Project) Model {
+	inputs := newInputs(&p)
+	inputs[fieldName].Focus()
+
+	return Model{
+		app:     a,
+		back:    back,
+		editing: &p,
+		step:    stepDetails,
+		inputs:  inputs,
+		path:    p.Path,
+	}
+}
+
+// Init kicks off the directory picker's initial listing in add mode. In
+// edit mode there's no picker to load — stepBrowse is never entered —
+// so Init instead starts the name field's cursor blinking: NewEdit
+// already focused it (a struct field mutation, which sticks, unlike a
+// method call on Init's own value receiver), but the blink animation
+// itself is driven by a recurring tea.Cmd that has to be returned from
+// somewhere Bubble Tea actually schedules it, which Init is.
 func (m Model) Init() tea.Cmd {
+	if m.editing != nil {
+		return textinput.Blink
+	}
 	return m.picker.Init()
 }
 
@@ -230,19 +296,41 @@ func (m *Model) moveFocus(forward bool) tea.Cmd {
 	return m.inputs[m.focus].Focus()
 }
 
-// submit registers the project via app.AddProject using the picked path
-// and the name field, then — only if description or tags were filled
-// in, since AddProject itself only takes a name and a path — patches
-// those in with a follow-up UpdateProject. On success it hands off to
-// m.back; on any failure (empty name, AddProject/UpdateProject erroring
-// — e.g. a duplicate path the validator doesn't already catch) it stays
-// on stepDetails and shows the error inline instead, so the user's
-// already-typed input isn't lost.
+// submit saves the form. In edit mode (m.editing != nil) it saves a
+// copy of the original project with only Name/Description/TechStack
+// overwritten from the form, via UpdateProject — every other field
+// (IsFavorite, HasDocker, DockerIdentifier, RunCommands, ...) is
+// preserved exactly as it was, since the form never exposed them and
+// silently wiping them on every edit would be a surprising way to lose
+// data. In add mode it registers the project via app.AddProject using
+// the picked path and the name field, then — only if description or
+// tags were filled in, since AddProject itself only takes a name and a
+// path — patches those in with a follow-up UpdateProject.
+//
+// Either way, on success it hands off to m.back; on any failure (empty
+// name, AddProject/UpdateProject erroring — e.g. a duplicate path the
+// validator doesn't already catch) it stays on stepDetails and shows
+// the error inline instead, so the user's already-typed input isn't
+// lost.
 func (m Model) submit() (screen.Screen, tea.Cmd) {
 	name := strings.TrimSpace(m.inputs[fieldName].Value())
 	if name == "" {
 		m.err = fmt.Errorf("name is required")
 		return m, nil
+	}
+	description := strings.TrimSpace(m.inputs[fieldDescription].Value())
+	tags := parseTags(m.inputs[fieldTags].Value())
+
+	if m.editing != nil {
+		updated := *m.editing
+		updated.Name = name
+		updated.Description = description
+		updated.TechStack = tags
+		if err := m.app.Projects().UpdateProject(&updated); err != nil {
+			m.err = err
+			return m, nil
+		}
+		return m.back, m.back.Init()
 	}
 
 	p, err := m.app.AddProject(name, m.path)
@@ -250,9 +338,6 @@ func (m Model) submit() (screen.Screen, tea.Cmd) {
 		m.err = err
 		return m, nil
 	}
-
-	description := strings.TrimSpace(m.inputs[fieldDescription].Value())
-	tags := parseTags(m.inputs[fieldTags].Value())
 	if description != "" || len(tags) > 0 {
 		p.Description = description
 		p.TechStack = tags
@@ -303,7 +388,11 @@ var (
 // impression, and the dashboard's own panel, rather than either step
 // floating against the top-left corner.
 func (m Model) View() string {
-	title := theme.TitleStyle.Render("DevFlow — Add Project")
+	titleText := "DevFlow — Add Project"
+	if m.editing != nil {
+		titleText = "DevFlow — Edit Project"
+	}
+	title := theme.TitleStyle.Render(titleText)
 
 	var content string
 	if m.step == stepBrowse {
@@ -316,6 +405,11 @@ func (m Model) View() string {
 			browseKeyHints,
 		)
 	} else {
+		stepLabel := "Step 2 of 2 — only the name is required."
+		if m.editing != nil {
+			stepLabel = "Update the details below, then submit on the last field."
+		}
+
 		var form strings.Builder
 		for i, in := range m.inputs {
 			marker := "  "
@@ -327,7 +421,7 @@ func (m Model) View() string {
 
 		sections := []string{
 			title,
-			theme.SubtleStyle.Render("Step 2 of 2 — only the name is required."),
+			theme.SubtleStyle.Render(stepLabel),
 			"",
 			theme.SubtleStyle.Render("Path: " + m.path), "",
 			form.String(),

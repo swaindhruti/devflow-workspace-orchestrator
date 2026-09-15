@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	appPkg "github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
@@ -13,6 +14,7 @@ import (
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/docker"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/git"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/runner"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/shellexec"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 )
@@ -118,6 +120,163 @@ func TestUpdateStoresContextLoadError(t *testing.T) {
 	}
 	if model.ctx != nil {
 		t.Error("expected ctx to remain nil after a load error")
+	}
+}
+
+// seedProjectWithCommand adds a project with one saved command to a
+// (real) App, so tests can exercise startCommand/RunCommand against an
+// actual subprocess without hand-rolling this setup repeatedly.
+func seedProjectWithCommand(t *testing.T, a *appPkg.App, commandID, commandLine string) project.Project {
+	t.Helper()
+
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+	p.AddCommand(project.Command{ID: commandID, ProjectID: p.ID, Name: "test", Command: commandLine})
+	if err := a.Projects().UpdateProject(p); err != nil {
+		t.Fatalf("failed to save command: %v", err)
+	}
+	return *p
+}
+
+func TestStartCommandReportsRunStartedMsg(t *testing.T) {
+	a := newTestApp(t)
+	p := seedProjectWithCommand(t, a, "cmd-1", "echo hello")
+
+	cmd := startCommand(a, p.ID, "cmd-1")
+	msg, ok := cmd().(runStartedMsg)
+	if !ok {
+		t.Fatalf("expected runStartedMsg, got %T", cmd())
+	}
+	if msg.err != nil {
+		t.Fatalf("did not expect an error, got %v", msg.err)
+	}
+	if msg.proc == nil || msg.proc.Command != "echo hello" {
+		t.Fatalf("expected the started process, got %+v", msg.proc)
+	}
+}
+
+func TestStartCommandReportsErrorForUnknownCommand(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	cmd := startCommand(a, p.ID, "does-not-exist")
+	msg := cmd().(runStartedMsg)
+
+	if msg.err == nil {
+		t.Fatal("expected an error for an unknown command ID")
+	}
+	if msg.proc != nil {
+		t.Error("expected no process on failure")
+	}
+}
+
+func TestHandleRunStartedStoresProcessAndStartsPolling(t *testing.T) {
+	a := newTestApp(t)
+	p := seedProjectWithCommand(t, a, "cmd-1", "echo hello")
+
+	proc, err := a.RunCommand(p.ID, "cmd-1")
+	if err != nil {
+		t.Fatalf("failed to start process: %v", err)
+	}
+
+	m := New(a, &fakeBack{}, p)
+	got, cmd := m.Update(runStartedMsg{proc: proc})
+	model := got.(Model)
+
+	if model.runProc != proc {
+		t.Fatal("expected runProc to be stored")
+	}
+	if cmd == nil {
+		t.Error("expected a Cmd to start polling")
+	}
+}
+
+func TestHandleRunStartedStoresLaunchError(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+
+	got, cmd := m.Update(runStartedMsg{err: errors.New("boom")})
+	model := got.(Model)
+
+	if model.runErr == nil {
+		t.Fatal("expected runErr to be stored")
+	}
+	if model.runProc != nil {
+		t.Error("expected no process to be stored on a launch error")
+	}
+	if cmd != nil {
+		t.Error("expected no follow-up command on a launch error")
+	}
+}
+
+func TestHandleProcessPolledRearmsWhileRunningAndUpdatesViewport(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	m.viewport = viewport.New(80, 10) // a real size, so visibleLines() isn't empty
+	proc := &runner.Process{}
+	m.runProc = proc
+
+	got, cmd := m.Update(processPolledMsg{
+		proc: proc,
+		snap: runner.Snapshot{State: runner.StateRunning, Stdout: "partial output"},
+	})
+	model := got.(Model)
+
+	if cmd == nil {
+		t.Error("expected the poll loop to re-arm while the process is still running")
+	}
+	if model.runSnap.State != runner.StateRunning {
+		t.Errorf("expected runSnap to be updated, got %+v", model.runSnap)
+	}
+	if !strings.Contains(model.viewport.View(), "partial output") {
+		t.Errorf("expected the viewport to show the latest output, got %q", model.viewport.View())
+	}
+}
+
+func TestHandleProcessPolledStopsRearmingOnceFinished(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	proc := &runner.Process{}
+	m.runProc = proc
+
+	got, cmd := m.Update(processPolledMsg{
+		proc: proc,
+		snap: runner.Snapshot{State: runner.StateCompleted, ExitCode: 0},
+	})
+	model := got.(Model)
+
+	if cmd != nil {
+		t.Error("expected the poll loop to stop once the process has finished")
+	}
+	if model.runSnap.State != runner.StateCompleted {
+		t.Errorf("expected runSnap to be updated, got %+v", model.runSnap)
+	}
+}
+
+func TestHandleProcessPolledIgnoresStaleTicksFromADifferentProcess(t *testing.T) {
+	m := New(nil, &fakeBack{}, project.Project{Name: "alpha"})
+	current := &runner.Process{}
+	stale := &runner.Process{}
+	m.runProc = current
+	// A sentinel distinct from anything the stale message carries, so a
+	// wrongly-applied update is detectable — StateRunning is the zero
+	// value of State, so leaving runSnap untouched can't be confused
+	// with correctly applying the message.
+	m.runSnap = runner.Snapshot{State: runner.StateCompleted, ExitCode: 7}
+
+	got, cmd := m.Update(processPolledMsg{
+		proc: stale,
+		snap: runner.Snapshot{State: runner.StateRunning, Stdout: "should be ignored"},
+	})
+	model := got.(Model)
+
+	if cmd != nil {
+		t.Error("expected a stale tick (from a process other than m.runProc) not to re-arm polling")
+	}
+	if model.runSnap.State != runner.StateCompleted || model.runSnap.ExitCode != 7 {
+		t.Errorf("expected the stale tick not to overwrite runSnap, got %+v", model.runSnap)
 	}
 }
 

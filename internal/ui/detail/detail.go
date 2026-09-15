@@ -19,29 +19,40 @@ package detail
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/runner"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/theme"
 )
 
+// defaultPollInterval is how often a running command's output/state is
+// re-checked once started (see pollProcessCmd). 200ms is frequent enough
+// to feel live without polling so fast it wastes CPU on a single-user
+// local tool.
+const defaultPollInterval = 200 * time.Millisecond
+
 // mode distinguishes the detail screen's input states: ordinary
-// viewing/navigation, filling in the add-command form, or waiting on a
-// yes/no answer to a pending command delete. Keeping this as an
-// explicit field (rather than inferring it from other state) is what
-// lets Update route a keypress unambiguously, the same reasoning
-// internal/ui/dashboard's own mode field documents.
+// viewing/navigation, filling in the add-command form, waiting on a
+// yes/no answer to a pending command delete, or watching a saved
+// command run. Keeping this as an explicit field (rather than inferring
+// it from other state) is what lets Update route a keypress
+// unambiguously, the same reasoning internal/ui/dashboard's own mode
+// field documents.
 type mode int
 
 const (
 	modeView mode = iota
 	modeAddCommand
 	modeConfirmDeleteCommand
+	modeRunning
 )
 
 // section is which sidebar entry the content pane is currently showing.
@@ -101,6 +112,27 @@ type Model struct {
 	cmdFocus  int
 	formErr   error
 
+	// runCommand is the saved command being run in modeRunning, captured
+	// at launch time so rendering never depends on a live cmdCursor (the
+	// user could, in principle, land back on modeView and move the
+	// cursor before this run finishes settling — not yet reachable since
+	// nothing exits modeRunning early except esc/finish, but keeping the
+	// run's own copy avoids relying on that always staying true).
+	runCommand project.Command
+	// runProc is the in-flight process, nil until runStartedMsg reports
+	// it. runErr is set instead if RunCommand itself failed to start the
+	// process at all (as opposed to the process starting and then
+	// failing, which is a normal runSnap.State of StateFailed).
+	runProc *runner.Process
+	runErr  error
+	// runSnap is the most recent poll result. Whether the run has
+	// finished is derived from it (runProc != nil && runSnap.State !=
+	// runner.StateRunning) rather than tracked separately, so there's
+	// only one source of truth for "is this still going."
+	runSnap      runner.Snapshot
+	viewport     viewport.Model
+	pollInterval time.Duration
+
 	width, height int
 }
 
@@ -116,7 +148,7 @@ type Model struct {
 //     e.g. internal/ui/splash).
 //   - p: the project to show details for.
 func New(a *app.App, back screen.Screen, p project.Project) Model {
-	return Model{app: a, back: back, project: p}
+	return Model{app: a, back: back, project: p, pollInterval: defaultPollInterval}
 }
 
 // contextLoadedMsg carries the result of fetching the project's
@@ -140,6 +172,47 @@ func (m Model) loadContext() tea.Msg {
 	return contextLoadedMsg{ctx: ctx, err: err}
 }
 
+// runStartedMsg carries the result of launching a saved command via
+// app.RunCommand, delivered via startCommand's tea.Cmd.
+type runStartedMsg struct {
+	proc *runner.Process
+	err  error
+}
+
+// processPolledMsg carries one poll result for a running process,
+// delivered via pollProcessCmd's tea.Cmd. proc identifies which run this
+// reading belongs to, so a stale tick arriving after the user has left
+// modeRunning (or, once a later run replaces runProc, from a previous
+// run) can be told apart from the current one — see handleProcessPolled.
+type processPolledMsg struct {
+	proc *runner.Process
+	snap runner.Snapshot
+}
+
+// startCommand launches the given saved command through App.RunCommand
+// and reports the outcome as a runStartedMsg. It's a tea.Cmd (a
+// zero-argument closure returning tea.Msg) so the launch — which starts
+// an OS process — doesn't block Bubble Tea's event loop, the same
+// reasoning loadContext already documents for the Git/Docker fetch.
+func startCommand(a *app.App, projectID, commandID string) tea.Cmd {
+	return func() tea.Msg {
+		proc, err := a.RunCommand(projectID, commandID)
+		return runStartedMsg{proc: proc, err: err}
+	}
+}
+
+// pollProcessCmd waits interval, then takes one Snapshot of proc and
+// reports it as a processPolledMsg. It does not re-arm itself — whether
+// polling continues is decided entirely by handleProcessPolled, which
+// re-issues this same Cmd only while the process is still running. This
+// keeps "when to stop polling" in exactly one place rather than split
+// between the Cmd and its handler.
+func pollProcessCmd(proc *runner.Process, interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(time.Time) tea.Msg {
+		return processPolledMsg{proc: proc, snap: proc.Snapshot()}
+	})
+}
+
 // newCommandInputs builds the blank name/command fields for the
 // add-command form.
 func newCommandInputs() [cmdFieldCount]textinput.Model {
@@ -157,10 +230,10 @@ func newCommandInputs() [cmdFieldCount]textinput.Model {
 }
 
 // Update tracks the terminal size (from tea.WindowSizeMsg) and stores
-// the result of a contextLoadedMsg regardless of mode, then dispatches
-// any tea.KeyMsg to updateView, updateAddCommand, or
-// updateConfirmDeleteCommand depending on m.mode. Every other message
-// is ignored.
+// the result of a contextLoadedMsg, runStartedMsg, or processPolledMsg
+// regardless of mode, then dispatches any tea.KeyMsg to updateView,
+// updateAddCommand, or updateConfirmDeleteCommand depending on m.mode.
+// Every other message is ignored.
 func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -174,6 +247,12 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 		}
 		m.ctx = &msg.ctx
 		return m, nil
+
+	case runStartedMsg:
+		return m.handleRunStarted(msg)
+
+	case processPolledMsg:
+		return m.handleProcessPolled(msg)
 
 	case tea.KeyMsg:
 		switch m.mode {
@@ -242,6 +321,59 @@ func (m Model) updateView(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// handleRunStarted stores the outcome of startCommand. A launch failure
+// (the process never started at all — e.g. the shell couldn't be found)
+// is kept separate from runSnap so the running pane can tell "never
+// started" apart from "started and then failed," which is a normal
+// runSnap.State of StateFailed reported through the poll loop instead.
+// On success, it fires the first poll immediately so the pane doesn't
+// sit showing nothing for a full pollInterval before any output appears.
+func (m Model) handleRunStarted(msg runStartedMsg) (screen.Screen, tea.Cmd) {
+	if msg.err != nil {
+		m.runErr = msg.err
+		return m, nil
+	}
+	m.runProc = msg.proc
+	return m, pollProcessCmd(msg.proc, m.pollInterval)
+}
+
+// handleProcessPolled stores one poll result and, if the process is
+// still running, re-arms the poll loop; otherwise it lets the loop end
+// by returning a nil Cmd. msg.proc is checked against m.runProc first —
+// a tick that arrives for a run the user has already left (esc) or that
+// belongs to a since-replaced run is silently dropped rather than
+// resurrecting stale state. This is what makes the loop self-terminating
+// with no separate "cancel polling" message: once modeRunning is left,
+// nothing holds onto the old proc pointer to match against, so the next
+// stray tick (if one was already in flight) is simply ignored.
+func (m Model) handleProcessPolled(msg processPolledMsg) (screen.Screen, tea.Cmd) {
+	if msg.proc != m.runProc {
+		return m, nil
+	}
+
+	m.runSnap = msg.snap
+	m.viewport.SetContent(buildRunOutput(msg.snap))
+	m.viewport.GotoBottom()
+
+	if msg.snap.State == runner.StateRunning {
+		return m, pollProcessCmd(msg.proc, m.pollInterval)
+	}
+	return m, nil
+}
+
+// buildRunOutput composes the text shown in the running pane's scrollable
+// output: stdout, followed by a divider and stderr, but only if there's
+// any stderr to show. The two streams are captured into separate
+// buffers by runner.Process and can't be reconstructed into one true
+// chronological interleaving, so this doesn't attempt to fake that —
+// it shows them as two distinct blocks instead.
+func buildRunOutput(snap runner.Snapshot) string {
+	if snap.Stderr == "" {
+		return snap.Stdout
+	}
+	return snap.Stdout + "\n\n── stderr ──\n" + snap.Stderr
 }
 
 // updateAddCommand handles a keypress while the add-command form is
@@ -520,6 +652,13 @@ func (m Model) renderSection() string {
 	case sectionCommands:
 		if m.mode == modeAddCommand {
 			return m.renderAddCommandForm()
+		}
+		if m.mode == modeRunning {
+			// TODO: replaced with a real running/output pane in a
+			// following change; this placeholder just keeps the build
+			// and existing tests green while the run/poll state machine
+			// lands on its own.
+			return theme.TitleStyle.Render("Running: " + m.runCommand.Name)
 		}
 		return m.renderCommandsPane()
 	case sectionGit:

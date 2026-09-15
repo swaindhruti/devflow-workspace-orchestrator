@@ -129,8 +129,12 @@ func TestAKeyOpensAddProjectScreen(t *testing.T) {
 func TestViewShowsEmptyState(t *testing.T) {
 	m := New(newTestApp(t))
 
-	if !strings.Contains(m.View(), "No projects registered yet.") {
+	view := m.View()
+	if !strings.Contains(view, "No projects yet") {
 		t.Error("expected empty-state message in view")
+	}
+	if !strings.Contains(view, "add a project") {
+		t.Error("expected empty-state view to explain how to add a project")
 	}
 }
 

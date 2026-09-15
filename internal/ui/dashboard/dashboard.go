@@ -207,33 +207,58 @@ func (m *Model) deleteSelected() {
 	m.status = fmt.Sprintf("deleted %q", deleted.Name)
 }
 
+// keyHints is the dashboard's full keybinding legend, shown at the
+// bottom of the panel whenever there's no more pressing status or
+// confirmation to show instead. It's the answer to "how do I use this
+// screen" for a first-time user.
+var keyHints = theme.KeyHints([][2]string{
+	{"↑/k ↓/j", "navigate"},
+	{"a", "add project"},
+	{"f", "toggle favorite"},
+	{"d", "delete"},
+	{"q", "quit"},
+})
+
 // confirmPromptStyle renders the "delete this project?" prompt in
 // theme.Danger, bold, so it reads as distinctly higher-stakes than the
 // ordinary status line it temporarily replaces.
 var confirmPromptStyle = lipgloss.NewStyle().Bold(true).Foreground(theme.Danger)
 
-// View renders the project list, or an empty-state or error message in
-// place of it when there is nothing to show yet. Below the list, it
-// shows one of: a delete confirmation prompt (modeConfirmDelete), a
-// transient status message (m.status), or the ordinary keybinding help
-// line — in that priority order, since only one fits in that space at a
-// time.
+// View renders the dashboard as a single bordered, centered panel (see
+// theme.PanelStyle): a title and short subtitle, then the project list
+// (or an empty-state/error message in place of it), then a footer that
+// shows one of — a delete confirmation prompt (modeConfirmDelete), a
+// transient status message (m.status), or the full keybinding legend
+// (keyHints) — in that priority order, since only one fits in that
+// space at a time. The whole panel is placed in the center of the
+// terminal once a size is known (see m.centered), matching the splash
+// screen's centered first impression instead of the list floating
+// against the top-left corner.
 func (m Model) View() string {
-	title := theme.TitleStyle.Render("DevFlow — Projects")
+	header := lipgloss.JoinVertical(lipgloss.Left,
+		theme.TitleStyle.Render("DevFlow — Projects"),
+		theme.SubtleStyle.Render("Your registered projects, all in one place."),
+	)
 
 	if m.err != nil {
-		return lipgloss.JoinVertical(lipgloss.Left, title, "",
-			theme.SubtleStyle.Render(fmt.Sprintf("failed to load projects: %v", m.err)))
+		errPanel := theme.Panel(lipgloss.JoinVertical(lipgloss.Left, header, "",
+			lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("failed to load projects: %v", m.err))), m.width)
+		return m.centered(errPanel)
 	}
 
+	var body string
 	if len(m.projects) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left, title, "",
-			theme.SubtleStyle.Render("No projects registered yet."))
-	}
-
-	rows := make([]string, len(m.projects))
-	for i, p := range m.projects {
-		rows[i] = renderRow(p, i == m.cursor)
+		body = lipgloss.JoinVertical(lipgloss.Center,
+			theme.SubtleStyle.Render("No projects yet — let's add your first one."),
+			"",
+			theme.KeyHints([][2]string{{"a", "add a project"}}),
+		)
+	} else {
+		rows := make([]string, len(m.projects))
+		for i, p := range m.projects {
+			rows[i] = renderRow(p, i == m.cursor)
+		}
+		body = strings.Join(rows, "\n")
 	}
 
 	var footer string
@@ -243,10 +268,23 @@ func (m Model) View() string {
 	case m.status != "":
 		footer = theme.SubtleStyle.Render(m.status)
 	default:
-		footer = theme.HelpStyle.Render("↑/k up · ↓/j down · a add · f favorite · d delete · q quit")
+		footer = keyHints
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, title, "", strings.Join(rows, "\n"), "", footer)
+	panel := theme.Panel(lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", footer), m.width)
+	return m.centered(panel)
+}
+
+// centered places content in the middle of the terminal once its size
+// is known (via a tea.WindowSizeMsg reaching Update — see
+// internal/ui/root.go for why the dashboard reliably receives one even
+// though it isn't the first screen shown), falling back to returning
+// content unplaced if the size isn't known yet.
+func (m Model) centered(content string) string {
+	if m.width == 0 || m.height == 0 {
+		return content
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
 // favoriteStarStyle renders an unselected row's favorite star in

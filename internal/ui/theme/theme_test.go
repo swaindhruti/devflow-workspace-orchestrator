@@ -31,6 +31,22 @@ func TestGradientHandlesSingleLine(t *testing.T) {
 	}
 }
 
+func TestKeyHintsContainsEveryKeyAndDescription(t *testing.T) {
+	got := KeyHints([][2]string{{"a", "add"}, {"d", "delete"}, {"q", "quit"}})
+
+	for _, want := range []string{"a", "add", "d", "delete", "q", "quit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected KeyHints output to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestKeyHintsHandlesEmptyInput(t *testing.T) {
+	if got := KeyHints(nil); got != "" {
+		t.Errorf("expected empty input to render an empty line, got %q", got)
+	}
+}
+
 func TestGradientFallsBackToPlainTextForInvalidColor(t *testing.T) {
 	lines := []string{"one", "two"}
 

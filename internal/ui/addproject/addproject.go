@@ -89,6 +89,19 @@ func New(a *app.App, back screen.Screen) Model {
 	if home, err := os.UserHomeDir(); err == nil {
 		fp.CurrentDirectory = home
 	}
+	// AutoHeight (the default) sizes the picker off the raw terminal
+	// height alone, with no way to account for the panel border,
+	// padding, and instructional text View wraps around it — left as
+	// default, the picker would claim more rows than are actually left
+	// once that chrome is in place. Update takes over sizing explicitly
+	// instead (see browseChromeHeight).
+	fp.AutoHeight = false
+	// Recolor the picker to DevFlow's own violet/yellow palette instead
+	// of bubbles' default magenta, so it reads as part of the same app
+	// rather than a bolted-on third-party widget.
+	fp.Styles.Directory = lipgloss.NewStyle().Foreground(theme.Primary)
+	fp.Styles.Cursor = lipgloss.NewStyle().Foreground(theme.Accent)
+	fp.Styles.Selected = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
 
 	var inputs [fieldCount]textinput.Model
 	inputs[fieldName] = textinput.New()
@@ -117,12 +130,29 @@ func (m Model) Init() tea.Cmd {
 	return m.picker.Init()
 }
 
+// browseChromeHeight is how many terminal rows the browse step's
+// non-picker chrome consumes: theme.PanelStyle's border (2) and
+// vertical padding (2), plus the title, subtitle, "Browsing: <path>"
+// line, their surrounding blank lines, and the help line View adds
+// around the picker itself. Update subtracts this from the known
+// terminal height to size the picker (see picker.SetHeight below) so
+// the whole panel fits within the terminal instead of the picker
+// claiming rows that are actually spoken for by the chrome around it.
+const browseChromeHeight = 14
+
 // Update dispatches to updateBrowse or updateDetails depending on
 // m.step, after handling the one thing both steps share: tracking the
-// terminal size so View can size the picker and lay out the form.
+// terminal size (and, since the picker's AutoHeight is off, sizing the
+// picker to fit within it — see browseChromeHeight) so View can lay out
+// the whole panel without overflowing the terminal.
 func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = sizeMsg.Width, sizeMsg.Height
+		if h := m.height - browseChromeHeight; h >= 3 {
+			m.picker.SetHeight(h)
+		} else {
+			m.picker.SetHeight(3)
+		}
 	}
 
 	if m.step == stepBrowse {
@@ -249,36 +279,79 @@ func parseTags(raw string) []string {
 	return tags
 }
 
+// browseKeyHints and detailsKeyHints are each step's full keybinding
+// legend — the answer to "how do I use this screen" for a first-time
+// user, shown at the bottom of the panel.
+var (
+	browseKeyHints = theme.KeyHints([][2]string{
+		{"↑/k ↓/j", "move"},
+		{"enter/l", "open"},
+		{"h/esc", "up a dir"},
+		{"s", "choose this directory"},
+		{"q", "cancel"},
+	})
+	detailsKeyHints = theme.KeyHints([][2]string{
+		{"tab/shift+tab", "move field"},
+		{"enter", "next field / submit"},
+		{"esc", "cancel"},
+	})
+)
+
 // View renders stepBrowse's directory picker or stepDetails' form,
-// whichever is current.
+// whichever is current, as a single bordered, centered panel (see
+// theme.PanelStyle) — matching the splash screen's centered first
+// impression, and the dashboard's own panel, rather than either step
+// floating against the top-left corner.
 func (m Model) View() string {
 	title := theme.TitleStyle.Render("DevFlow — Add Project")
 
+	var content string
 	if m.step == stepBrowse {
-		help := theme.HelpStyle.Render("↑/k ↓/j move · l/enter open · h/esc up a dir · s choose this directory · q cancel")
-		return lipgloss.JoinVertical(lipgloss.Left, title, "",
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			title,
+			theme.SubtleStyle.Render("Step 1 of 2 — browse to your project's folder."),
+			"",
 			theme.SubtleStyle.Render("Browsing: "+m.picker.CurrentDirectory), "",
-			m.picker.View(), "", help)
-	}
-
-	var form strings.Builder
-	for i, in := range m.inputs {
-		marker := "  "
-		if i == m.focus {
-			marker = "> "
+			m.picker.View(), "",
+			browseKeyHints,
+		)
+	} else {
+		var form strings.Builder
+		for i, in := range m.inputs {
+			marker := "  "
+			if i == m.focus {
+				marker = "> "
+			}
+			fmt.Fprintf(&form, "%s%-12s %s\n", marker, fieldLabels[i]+":", in.View())
 		}
-		fmt.Fprintf(&form, "%s%-12s %s\n", marker, fieldLabels[i]+":", in.View())
+
+		sections := []string{
+			title,
+			theme.SubtleStyle.Render("Step 2 of 2 — only the name is required."),
+			"",
+			theme.SubtleStyle.Render("Path: " + m.path), "",
+			form.String(),
+		}
+		if m.err != nil {
+			sections = append(sections, lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("error: %v", m.err)), "")
+		}
+		sections = append(sections, detailsKeyHints)
+
+		content = lipgloss.JoinVertical(lipgloss.Left, sections...)
 	}
 
-	sections := []string{
-		title, "",
-		theme.SubtleStyle.Render("Path: " + m.path), "",
-		form.String(),
-	}
-	if m.err != nil {
-		sections = append(sections, lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("error: %v", m.err)), "")
-	}
-	sections = append(sections, theme.HelpStyle.Render("tab/shift+tab move · enter next field/submit · esc cancel"))
+	return m.centered(theme.Panel(content, m.width))
+}
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+// centered places content in the middle of the terminal once its size
+// is known (via a tea.WindowSizeMsg reaching Update — see
+// internal/ui/root.go for why this screen reliably receives one even
+// though it's only ever reached mid-session, not shown at startup),
+// falling back to returning content unplaced if the size isn't known
+// yet.
+func (m Model) centered(content string) string {
+	if m.width == 0 || m.height == 0 {
+		return content
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }

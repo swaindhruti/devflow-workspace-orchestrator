@@ -129,6 +129,96 @@ func TestViewShowsErrorState(t *testing.T) {
 	}
 }
 
+func TestFKeyTogglesFavorite(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	m := New(a)
+	m.projects = []project.Project{*p}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	model := got.(Model)
+	if !model.projects[0].IsFavorite {
+		t.Fatal("expected project to be marked favorite after pressing f")
+	}
+
+	stored, err := a.Projects().GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatalf("failed to reload project: %v", err)
+	}
+	if !stored.IsFavorite {
+		t.Error("expected the favorite flag to be persisted, not just held in memory")
+	}
+
+	got, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	model = got.(Model)
+	if model.projects[0].IsFavorite {
+		t.Error("expected a second f to unmark the favorite")
+	}
+}
+
+func TestDKeyEntersConfirmModeAndYDeletes(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	m := New(a)
+	m.projects = []project.Project{*p}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	model := got.(Model)
+	if model.mode != modeConfirmDelete {
+		t.Fatal("expected d to enter delete-confirmation mode")
+	}
+	if !strings.Contains(model.View(), "Delete \"alpha\"?") {
+		t.Errorf("expected a confirmation prompt naming the project, got %q", model.View())
+	}
+
+	got, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	model = got.(Model)
+	if model.mode != modeList {
+		t.Error("expected confirming a delete to return to list mode")
+	}
+	if len(model.projects) != 0 {
+		t.Errorf("expected the project to be removed from the list, got %d remaining", len(model.projects))
+	}
+
+	remaining, err := a.Projects().GetAllProjects()
+	if err != nil {
+		t.Fatalf("failed to list projects: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("expected the project to be deleted from storage, got %d remaining", len(remaining))
+	}
+}
+
+func TestDKeyThenNCancelsWithoutDeleting(t *testing.T) {
+	a := newTestApp(t)
+	p, err := a.AddProject("alpha", t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to add project: %v", err)
+	}
+
+	m := New(a)
+	m.projects = []project.Project{*p}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got, _ = got.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	model := got.(Model)
+
+	if model.mode != modeList {
+		t.Error("expected n to return to list mode")
+	}
+	if len(model.projects) != 1 {
+		t.Errorf("expected the project to remain, got %d", len(model.projects))
+	}
+}
+
 func TestViewShowsProjectsWithFavoriteAndDockerMarkers(t *testing.T) {
 	m := New(newTestApp(t))
 	m.projects = []project.Project{

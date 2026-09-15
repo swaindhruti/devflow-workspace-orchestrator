@@ -12,6 +12,7 @@ import (
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/config"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/shellexec"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/addproject"
 )
 
 // newTestApp builds a real App backed by a disposable temp registry, the
@@ -109,6 +110,19 @@ func TestUpdateQuitsOnQ(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatalf("expected tea.QuitMsg, got %T", cmd())
+	}
+}
+
+func TestAKeyOpensAddProjectScreen(t *testing.T) {
+	m := New(newTestApp(t))
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+
+	if _, ok := got.(addproject.Model); !ok {
+		t.Fatalf("expected a to open addproject.Model, got %T", got)
+	}
+	if cmd == nil {
+		t.Error("expected a non-nil Init command from the new screen")
 	}
 }
 

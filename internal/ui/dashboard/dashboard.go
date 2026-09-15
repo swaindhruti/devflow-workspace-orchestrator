@@ -21,6 +21,7 @@ import (
 
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/addproject"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/theme"
 )
@@ -108,7 +109,8 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 }
 
 // updateList handles a keypress while in modeList: cursor movement,
-// favorite toggling, entering delete confirmation, and quit.
+// favorite toggling, entering delete confirmation, opening the
+// add-project screen, and quit.
 func (m Model) updateList(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -129,6 +131,10 @@ func (m Model) updateList(msg tea.KeyMsg) (screen.Screen, tea.Cmd) {
 			m.mode = modeConfirmDelete
 			m.status = ""
 		}
+
+	case "a":
+		next := addproject.New(m.app, m)
+		return next, next.Init()
 
 	case "q":
 		return m, tea.Quit
@@ -237,7 +243,7 @@ func (m Model) View() string {
 	case m.status != "":
 		footer = theme.SubtleStyle.Render(m.status)
 	default:
-		footer = theme.HelpStyle.Render("↑/k up · ↓/j down · f favorite · d delete · q quit")
+		footer = theme.HelpStyle.Render("↑/k up · ↓/j down · a add · f favorite · d delete · q quit")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, "", strings.Join(rows, "\n"), "", footer)

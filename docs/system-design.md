@@ -5,13 +5,20 @@ DevFlow is a terminal-first workspace manager built to reduce context switching 
 ## System Overview
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '16px'}}}%%
 flowchart TD
-	P[Project Registry] --> D[Dashboard]
-	D --> A[Application Actions]
-	A --> S[Services]
-	S --> R[Repositories]
-	R --> F[JSON Storage]
-	S --> O[OS Integrations]
+	classDef registry fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#ffffff
+	classDef ui fill:#facc15,stroke:#a16207,stroke-width:2px,color:#1f2937
+	classDef app fill:#0ea5e9,stroke:#0369a1,stroke-width:2px,color:#ffffff
+	classDef infra fill:#10b981,stroke:#047857,stroke-width:2px,color:#ffffff
+	classDef os fill:#f43f5e,stroke:#9f1239,stroke-width:2px,color:#ffffff
+
+	P[Project Registry]:::registry --> D["Bubble Tea UI<br/>(Dashboard / Detail)"]:::ui
+	D --> A[Application Layer]:::app
+	A --> S["Domain Services<br/>(project, docker, git, tmux)"]:::app
+	S --> R[("JSON Storage")]:::infra
+	S --> O[["Git / Docker / tmux CLIs, Shell"]]:::os
+	O -.streamed output.-> D
 ```
 
 ## Product Vision

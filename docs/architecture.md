@@ -20,17 +20,49 @@ packages (runner, shellexec) rather than calling os/exec directly.
 ```
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '16px'}}}%%
 flowchart LR
-    UI[Bubble Tea UI] --> APP[Application Layer]
-    APP --> PROJ[project]
-    APP --> DOCK[docker]
-    APP --> GIT[git]
-    APP --> TMUX[tmux]
-    PROJ --> REPO[Repository / Storage]
-    DOCK --> RUN[runner / shellexec]
+    classDef ui fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#ffffff
+    classDef app fill:#facc15,stroke:#a16207,stroke-width:2px,color:#1f2937
+    classDef domain fill:#0ea5e9,stroke:#0369a1,stroke-width:2px,color:#ffffff
+    classDef infra fill:#10b981,stroke:#047857,stroke-width:2px,color:#ffffff
+    classDef os fill:#f43f5e,stroke:#9f1239,stroke-width:2px,color:#ffffff
+
+    UI[Bubble Tea UI]:::ui --> APP[Application Layer]:::app
+    APP --> PROJ[project]:::domain
+    APP --> DOCK[docker]:::domain
+    APP --> GIT[git]:::domain
+    APP --> TMUX[tmux]:::domain
+    PROJ --> REPO[("Repository / Storage")]:::infra
+    DOCK --> RUN[runner / shellexec]:::infra
     GIT --> RUN
     TMUX --> RUN
-    RUN --> OS[Docker / Git / tmux / Shell]
+    RUN --> OS[["Docker / Git / tmux / Shell"]]:::os
+```
+
+This diagram's colors are set explicitly (`classDef`/`:::class`, not the ambient
+Mermaid theme), so every layer stays readable on both a light and a dark
+GitHub background rather than depending on which one happens to be active
+when it's rendered.
+
+The screen-to-screen flow the Bubble Tea UI itself drives — which is a
+separate concern from the layer diagram above — looks like this:
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '16px'}}}%%
+flowchart LR
+    classDef screen fill:#7c3aed,stroke:#4c1d95,stroke-width:2px,color:#ffffff
+    classDef modal fill:#facc15,stroke:#a16207,stroke-width:2px,color:#1f2937
+
+    SPLASH[Splash]:::screen -->|any key| DASH[Dashboard]:::screen
+    DASH -->|a| ADD["Add Project<br/>(projectform)"]:::modal
+    DASH -->|e| EDIT["Edit Project<br/>(projectform)"]:::modal
+    DASH -->|enter| DETAIL[Project Detail]:::screen
+    ADD -->|save / esc| DASH
+    EDIT -->|save / esc| DASH
+    DETAIL -->|esc| DASH
+    DETAIL -->|"r (Commands section)"| RUNNING["Running a Command<br/>(live output)"]:::modal
+    RUNNING -->|esc, or after it finishes| DETAIL
 ```
 
 ## Domain-First, Not Layered
@@ -92,9 +124,20 @@ These are used by domain packages but hold no domain rules of their own.
 
 - **`internal/config`** — loads `devflow.yaml` into typed settings
   (storage path, runner shell/timeout), with built-in defaults.
-- **`internal/runner`** — starts and tracks long-running, streamed shell
-  commands (used for both project commands and Docker actions like
-  `docker compose up`).
+- **`internal/runner`** — starts and tracks long-running shell commands
+  (used for both project commands and Docker actions like
+  `docker compose up`), exposing a mutex-guarded `Snapshot` a caller can
+  poll safely while the command is still running (see `Process.Snapshot`).
+  Every command starts as the leader of its own new process group
+  (`process_unix.go`, behind a `!windows` build tag) so stopping it kills
+  the whole tree — not just the top-level shell — since a shell command
+  commonly forks children (a backgrounded job, `npm run dev` spawning
+  node, ...) that a plain kill of the shell alone would leave running,
+  orphaned, and in the worst case still holding the shell's stdout pipe
+  open, which would keep `Wait` from ever returning at all.
+  `process_windows.go` is the fallback for a platform with no
+  process-group equivalent in `os/exec`: it can only stop the top-level
+  process, a documented, known limitation there rather than a silent gap.
 - **`internal/shellexec`** — a small `Executor` interface over "run a CLI
   command, capture output," used for short-lived, parsed CLI calls
   (`git status`, `docker ps --format json`, `tmux list-sessions`). Kept

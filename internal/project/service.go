@@ -3,6 +3,7 @@ package project
 import (
 	"crypto/rand"
 	"fmt"
+	"path/filepath"
 )
 
 // Service is the project domain's business-logic layer. It sits between
@@ -62,14 +63,49 @@ func (s *Service) GetProjectByID(id string) (*Project, error) {
 //     callers should never pre-assign an ID.
 //
 // Returns an error if the project fails ValidateProject (e.g. missing name
-// or path), or if the underlying Repository could not be written.
+// or path), if a project is already registered at the same Path (see
+// hasProjectWithPath — a directory should only correspond to one registry
+// entry, since two entries for the same path would give ambiguous Git/
+// Docker context and make "delete the project at this path" meaningless),
+// or if the underlying Repository could not be read or written.
 func (s *Service) AddProject(project *Project) error {
 	project.ID = generateID()
-	err := ValidateProject(project)
+	if err := ValidateProject(project); err != nil {
+		return err
+	}
+
+	duplicate, err := s.hasProjectWithPath(project.Path)
 	if err != nil {
 		return err
 	}
+	if duplicate {
+		return fmt.Errorf("a project is already registered at %q", project.Path)
+	}
+
 	return s.repo.AddProject(project)
+}
+
+// hasProjectWithPath reports whether any already-registered project's Path
+// matches path, comparing filepath.Clean'd forms so e.g. "/a/b/" and "/a/b"
+// are recognized as the same directory.
+//
+// Parameters:
+//   - path: the candidate project path to check for a collision.
+//
+// Returns an error only if the underlying Repository could not be read.
+func (s *Service) hasProjectWithPath(path string) (bool, error) {
+	existing, err := s.repo.GetAllProjects()
+	if err != nil {
+		return false, err
+	}
+
+	clean := filepath.Clean(path)
+	for _, p := range existing {
+		if filepath.Clean(p.Path) == clean {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // UpdateProject validates and persists changes to an existing project.

@@ -27,6 +27,20 @@ var Primary = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#A78BFA"}
 // favorite marker, a call-to-action), not as a replacement for it.
 var Accent = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#FACC15"}
 
+// BrandGradientFrom and BrandGradientTo are the two endpoint colors of
+// DevFlow's wordmark gradient — the same vivid purple fading into a
+// warm yellow used by the splash screen's block-art "DEVFLOW" banner
+// (internal/ui/splash) — exported here so any screen that wants to
+// reuse that exact wordmark (e.g. a small logo above the dashboard
+// panel) renders it identically rather than approximating it with a
+// slightly different pair of hex values. These are lipgloss.Color, not
+// AdaptiveColor, for the same reason Gradient's from/to parameters are:
+// blending needs concrete RGB to interpolate through.
+var (
+	BrandGradientFrom = lipgloss.Color("#7C3AED")
+	BrandGradientTo   = lipgloss.Color("#FACC15")
+)
+
 // Muted is used for secondary text: descriptions, hints, and anything
 // that should visually recede behind Primary content.
 var Muted = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"}

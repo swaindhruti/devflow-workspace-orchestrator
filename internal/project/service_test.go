@@ -135,6 +135,55 @@ func TestService_AddProject_Valid(t *testing.T) {
 	}
 }
 
+func TestService_AddProject_RejectsDuplicatePath(t *testing.T) {
+	mockRepo := &mockRepository{}
+	service := NewProjectService(mockRepo)
+
+	first := &Project{Name: "First", Path: "/valid/path"}
+	if err := service.AddProject(first); err != nil {
+		t.Fatalf("expected no error registering the first project, got %v", err)
+	}
+
+	second := &Project{Name: "Second", Path: "/valid/path"}
+	err := service.AddProject(second)
+	if err == nil {
+		t.Fatal("expected an error registering a second project at the same path")
+	}
+
+	if len(mockRepo.projects) != 1 {
+		t.Fatalf("expected the duplicate to be rejected before reaching storage, got %d projects", len(mockRepo.projects))
+	}
+}
+
+func TestService_AddProject_AllowsDifferentPathsWithSameName(t *testing.T) {
+	mockRepo := &mockRepository{}
+	service := NewProjectService(mockRepo)
+
+	if err := service.AddProject(&Project{Name: "api", Path: "/a/api"}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if err := service.AddProject(&Project{Name: "api", Path: "/b/api"}); err != nil {
+		t.Fatalf("expected two projects with the same name but different paths to both be allowed, got %v", err)
+	}
+
+	if len(mockRepo.projects) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(mockRepo.projects))
+	}
+}
+
+func TestService_AddProject_TreatsTrailingSlashAsSamePath(t *testing.T) {
+	mockRepo := &mockRepository{}
+	service := NewProjectService(mockRepo)
+
+	if err := service.AddProject(&Project{Name: "first", Path: "/a/b"}); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	err := service.AddProject(&Project{Name: "second", Path: "/a/b/"})
+	if err == nil {
+		t.Fatal("expected /a/b and /a/b/ to be recognized as the same path")
+	}
+}
+
 func TestService_GetProjectByID_Found(t *testing.T) {
 	mockRepo := &mockRepository{
 		projects: []Project{

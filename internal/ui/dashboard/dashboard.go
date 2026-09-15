@@ -22,6 +22,7 @@ import (
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/app"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/project"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/addproject"
+	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/banner"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/screen"
 	"github.com/swaindhruti/devflow-workspace-orchestrator.git/internal/ui/theme"
 )
@@ -224,26 +225,34 @@ var keyHints = theme.KeyHints([][2]string{
 // ordinary status line it temporarily replaces.
 var confirmPromptStyle = lipgloss.NewStyle().Bold(true).Foreground(theme.Danger)
 
-// View renders the dashboard as a single bordered, centered panel (see
-// theme.PanelStyle): a title and short subtitle, then the project list
-// (or an empty-state/error message in place of it), then a footer that
-// shows one of — a delete confirmation prompt (modeConfirmDelete), a
-// transient status message (m.status), or the full keybinding legend
-// (keyHints) — in that priority order, since only one fits in that
-// space at a time. The whole panel is placed in the center of the
-// terminal once a size is known (see m.centered), matching the splash
-// screen's centered first impression instead of the list floating
-// against the top-left corner.
+// logoLines is the DEVFLOW block-art wordmark's raw bitmap output,
+// computed once at package init since banner.Render's output never
+// changes — View re-applies theme.Gradient to it on every render
+// (cheap: it's just re-coloring the same fixed text), matching the
+// splash screen's own banner so the dashboard reads as a continuation
+// of that first impression rather than a different, unbranded screen.
+var logoLines = strings.Split(banner.Render("DEVFLOW", "██", "  "), "\n")
+
+// View renders the dashboard as the gradient DEVFLOW wordmark above a
+// single bordered, centered panel (see theme.PanelStyle): a subtitle,
+// then the project list (or an empty-state/error message in place of
+// it), then a footer. The keybinding legend (keyHints) is always part
+// of that footer — it's the answer to "how do I use this screen," so
+// it shouldn't disappear the moment the user actually does something —
+// with a delete confirmation prompt (modeConfirmDelete) or a transient
+// status message (m.status) shown as an extra line above it when
+// there's one to show. The wordmark plus panel are placed together in
+// the center of the terminal once a size is known (see m.centered),
+// matching the splash screen's centered first impression instead of
+// the list floating against the top-left corner.
 func (m Model) View() string {
-	header := lipgloss.JoinVertical(lipgloss.Left,
-		theme.TitleStyle.Render("DevFlow — Projects"),
-		theme.SubtleStyle.Render("Your registered projects, all in one place."),
-	)
+	logo := theme.Gradient(logoLines, theme.BrandGradientFrom, theme.BrandGradientTo)
+	header := theme.SubtleStyle.Render("Your registered projects, all in one place.")
 
 	if m.err != nil {
 		errPanel := theme.Panel(lipgloss.JoinVertical(lipgloss.Left, header, "",
 			lipgloss.NewStyle().Foreground(theme.Danger).Render(fmt.Sprintf("failed to load projects: %v", m.err))), m.width)
-		return m.centered(errPanel)
+		return m.centered(lipgloss.JoinVertical(lipgloss.Center, logo, "", errPanel))
 	}
 
 	var body string
@@ -261,18 +270,17 @@ func (m Model) View() string {
 		body = strings.Join(rows, "\n")
 	}
 
-	var footer string
+	footer := keyHints
 	switch {
 	case m.mode == modeConfirmDelete && m.cursor < len(m.projects):
-		footer = confirmPromptStyle.Render(fmt.Sprintf("Delete %q? (y/n)", m.projects[m.cursor].Name))
+		prompt := confirmPromptStyle.Render(fmt.Sprintf("Delete %q? (y/n)", m.projects[m.cursor].Name))
+		footer = lipgloss.JoinVertical(lipgloss.Left, prompt, "", footer)
 	case m.status != "":
-		footer = theme.SubtleStyle.Render(m.status)
-	default:
-		footer = keyHints
+		footer = lipgloss.JoinVertical(lipgloss.Left, theme.SubtleStyle.Render(m.status), "", footer)
 	}
 
 	panel := theme.Panel(lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", footer), m.width)
-	return m.centered(panel)
+	return m.centered(lipgloss.JoinVertical(lipgloss.Center, logo, "", panel))
 }
 
 // centered places content in the middle of the terminal once its size
@@ -295,6 +303,15 @@ func (m Model) centered(content string) string {
 // theme.TitleStyle) would let the star's own ANSI reset code cut off
 // the outer style partway through the line.
 var favoriteStarStyle = lipgloss.NewStyle().Foreground(theme.Accent)
+
+// stackStyle renders an unselected row's tech-stack tags in
+// theme.Primary (violet), the same safe-to-embed reasoning as
+// favoriteStarStyle above: unselected rows aren't re-wrapped in another
+// Render call, so it's safe to color just this substring. Without this,
+// every unselected row was a single flat, unstyled color — this and the
+// Accent-colored star are what give a row its two intentional brand
+// colors instead of relying on the terminal's own default foreground.
+var stackStyle = lipgloss.NewStyle().Foreground(theme.Primary)
 
 // renderRow formats one project's list entry: a selection marker, its
 // favorite star (if any), name, tech stack (if any), path, and a Docker
@@ -329,6 +346,9 @@ func renderRow(p project.Project, selected bool) string {
 	fav := starGlyph
 	if p.IsFavorite {
 		fav = favoriteStarStyle.Render(starGlyph)
+	}
+	if stack != "" {
+		stack = stackStyle.Render(stack)
 	}
 	return fmt.Sprintf("%s%s %-24s%s  %s%s", marker, fav, p.Name, stack, p.Path, docker)
 }

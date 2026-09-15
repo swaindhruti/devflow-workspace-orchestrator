@@ -17,15 +17,6 @@ import (
 // tagline is the short subtitle shown beneath the banner.
 const tagline = "Terminal Workspace Orchestrator"
 
-// gradientFrom and gradientTo are the banner's two endpoint colors — a
-// vivid purple fading into a warm yellow — deliberately distinct from the
-// app-wide theme.Primary so the splash keeps its own bold, one-time-only
-// first impression instead of just repeating the dashboard's palette.
-var (
-	gradientFrom = lipgloss.Color("#7C3AED")
-	gradientTo   = lipgloss.Color("#FACC15")
-)
-
 // mascotBitmapWidth is the number of grid cells across every mascot
 // bitmap row (see mascotSpec.Frames). mascotWidth/mascotHeight are the
 // rendered size of the art itself in terminal cells (mascotBitmapWidth
@@ -220,7 +211,7 @@ func (m Model) Update(msg tea.Msg) (screen.Screen, tea.Cmd) {
 // crew greeting the user rather than a bare logo screen.
 func (m Model) View() string {
 	bannerLines := strings.Split(banner.Render("DEVFLOW", "██", "  "), "\n")
-	gradientBanner := theme.Gradient(bannerLines, gradientFrom, gradientTo)
+	gradientBanner := theme.Gradient(bannerLines, theme.BrandGradientFrom, theme.BrandGradientTo)
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Center,

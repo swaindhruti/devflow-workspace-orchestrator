@@ -58,13 +58,13 @@ the vision below stays distinguishable from what is actually built.
 
 | Area                  | Status         | Notes                                                           |
 | ---------------------- | -------------- | ---------------------------------------------------------------- |
-| Project Registry       | Done           | `internal/project` — model, JSON storage, service, validation.  |
+| Project Registry       | Done           | `internal/project` — model, JSON storage, service, validation (including path-uniqueness — a directory can only be registered once).  |
 | Command Execution      | Done           | `internal/runner` — tracked, streamed shell processes.           |
 | Docker Awareness       | Done           | `internal/docker` — detection, default commands, container/image inspection, via `internal/shellexec`. |
 | Git Awareness          | Done           | `internal/git` — branch, status, staged/unstaged/untracked counts, ahead/behind, recent commits, via `internal/shellexec`. |
 | tmux Coordination      | Done           | `internal/tmux` — create/list/kill sessions, existence check, via `internal/shellexec`. Interactive attach is a documented app/UI-layer concern (see AttachArgs), not something the capture-based executor can perform. |
 | Application Layer      | Done           | `internal/app` — composition root wiring all four domains; cross-domain project registration (with Docker auto-detection), project context aggregation (Git + Docker in one read), and command routing. `cmd/devflow` now runs through it end to end. |
-| Interactive Dashboard  | Partial        | `internal/ui` is the real entrypoint now: a splash screen (block-letter DEVFLOW banner) hands off to a centered, bordered-panel project dashboard (favorite marker, tech stack, path, Docker badge, and a full styled keybinding legend), with favorite-toggle, delete, and add-project (a directory picker + form, via `charmbracelet/bubbles`, recolored to the app's palette) wired to `project.Service`. Still pending: editing an existing project, a project detail view (Git status, commands, Docker containers/images), command output streaming, and a tmux session view. |
+| Interactive Dashboard  | Partial        | `internal/ui` is the real entrypoint now: a splash screen (block-letter DEVFLOW banner) hands off to a project dashboard topped with the same gradient wordmark as a masthead, above a centered, bordered panel (favorite marker, tech stack, path, Docker badge, and an always-visible styled keybinding legend), with favorite-toggle, delete, and add-project (a directory picker + form, via `charmbracelet/bubbles`, recolored to the app's palette) wired to `project.Service`. Still pending: editing an existing project, a project detail view (Git status, commands, Docker containers/images), command output streaming, and a tmux session view. |
 | Search and Filtering   | Not started    | Depends on the dashboard.                                        |
 | Configuration          | Partial        | `internal/config` loads storage/runner settings; theme/shell/editor preferences not yet surfaced. |
 
